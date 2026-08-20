@@ -34,13 +34,10 @@
 
 ## Gates
 
-| Gate | 命令 | 退出码 | gitHead |
-|---|---|---|---|
-| structure | `builtin:structure` | 0 | `1197042c` |
-| unit-tests | `builtin:declared:unit-tests`（声明为 `pnpm run test`，`declaredBy: xbitshans`） | 0 | `1197042c` |
-
-**digest 不在此处抄录**，以 `evidence/verification-receipt.yaml` 为准。抄一份到这里会形成
-死循环：改动本文件即改变 contentRevision，使刚记下的 digest 当场失效。
+| Gate | 命令 | 退出码 | digest | gitHead |
+|---|---|---|---|---|
+| structure | `builtin:structure` | 0 | `ac60139c…` | `1197042c` |
+| unit-tests | `builtin:declared:unit-tests`（声明为 `pnpm run test`，`declaredBy: xbitshans`） | 0 | `5346bcdb…` | `1197042c` |
 
 ## 验证过程中发现并修复的缺陷
 

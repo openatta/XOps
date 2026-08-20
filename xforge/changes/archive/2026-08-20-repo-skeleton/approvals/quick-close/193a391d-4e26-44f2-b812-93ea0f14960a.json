@@ -1,0 +1,32 @@
+{
+  "apiVersion": "xforge.dev/v1alpha2",
+  "kind": "ApprovalReceipt",
+  "receiptId": "193a391d-4e26-44f2-b812-93ea0f14960a",
+  "change": "repo-skeleton",
+  "flow": "quick",
+  "stage": "ready-to-archive",
+  "transition": "archive",
+  "policyId": "quick-close",
+  "stateRevision": "85ea3e696887589bb27f09a6b9b98d29896404435a41f67daa407c3962a9027c",
+  "contentRevision": "e596863afcd8c4cc57f3dd116edaafc4463ef998f74cc319e742ed1ac891186f",
+  "policySnapshotDigest": "690a8284442ebbe707fddd7a1d41b07e64caab960fc15f1a36436ef554211b5a",
+  "gitBase": "834016494465778bb86724d25086f06b232e7d4d",
+  "gitHead": "1f2ebb84ccfcc877125a90591712780113b3ad16",
+  "governingDigest": "b2dfb4f819c2d9f967ac858467ec7b6c959d71b64b77f369be2a1a7c23e0bf36",
+  "governingRevision": "9c649f0db6e979672b363711468a5f978fc97aa3bad1b16b5543fb35b70f00e8",
+  "decision": "approve",
+  "approver": {
+    "id": "xbitshans",
+    "provider": "local",
+    "role": "maintainer",
+    "type": "human"
+  },
+  "decidedAt": "2026-08-20T12:10:17.796Z",
+  "reason": "goog",
+  "expiresAt": "2026-08-27T12:10:17.796Z",
+  "attestation": {
+    "method": "cli-terminal",
+    "respondedAt": "2026-08-20T12:10:17.795Z"
+  },
+  "digest": "d50a9c2321f527f6cc493116fefacdb12689f7c245d28ec6fca2111299f486ee"
+}

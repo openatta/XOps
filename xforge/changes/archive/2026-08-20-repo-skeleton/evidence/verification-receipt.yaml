@@ -1,0 +1,10 @@
+status: passed
+contentRevision: 2cd7c2e39bea64c692750b76f769fea95fe47459853a3af9431687a8a1bc149d
+gitHead: 1f2ebb84ccfcc877125a90591712780113b3ad16
+gates:
+  - gate: structure
+    evidence: 7b1dcd8f2bf5a70d33340fb2c5264ea0703ed60a6e9d0b1a7b408b578dcf0ef0
+    status: passed
+  - gate: unit-tests
+    evidence: 75a936d484f239e41dbac31a2c1ff9c8ba8fd8176f971e3186381708e8d225bd
+    status: passed

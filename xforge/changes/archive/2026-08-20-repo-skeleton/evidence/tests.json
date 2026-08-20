@@ -1,0 +1,34 @@
+{
+  "protocolVersion": "2",
+  "schemaVersion": "1",
+  "gate": "unit-tests",
+  "change": "repo-skeleton",
+  "flow": "quick",
+  "stage": "ready-to-archive",
+  "stateRevision": "34cd268f697b3f2c2a91701da3a9313e56527dfebd4cecf47581273390650daf",
+  "contentRevision": "2cd7c2e39bea64c692750b76f769fea95fe47459853a3af9431687a8a1bc149d",
+  "policySnapshotDigest": "690a8284442ebbe707fddd7a1d41b07e64caab960fc15f1a36436ef554211b5a",
+  "gitBase": "834016494465778bb86724d25086f06b232e7d4d",
+  "gitHead": "1f2ebb84ccfcc877125a90591712780113b3ad16",
+  "inputDigest": "06e92614244da99373c8ce19f47c3e42894d38a8a44c03694e2dfecae92d8333",
+  "runner": {
+    "name": "@xforge/cli",
+    "version": "0.7.16",
+    "integrity": "sha256:b1343220589d7258710eebb878d21e4c1bf26f0f8a97bc1808480829899d5f19"
+  },
+  "command": [
+    "builtin:declared:unit-tests"
+  ],
+  "shell": false,
+  "workingDirectory": ".",
+  "exitCode": 0,
+  "timedOut": false,
+  "outputTruncated": false,
+  "stdout": "pnpm run test -> exit 0 in 5472ms (declared by xbitshans)\n\n RUN  v3.2.7 /Users/xbitshans/Workspace/XOps\n\n ✓ test/skeleton.test.ts (8 tests) 4439ms\n   ✓ SKEL-001 新增包无需修改根配置即被纳入 > typecheck 覆盖新增包：注入类型错误后命令失败并指出该文件  1658ms\n   ✓ SKEL-001 新增包无需修改根配置即被纳入 > lint 覆盖新增包：注入未使用变量后命令失败并命中规则  878ms\n   ✓ SKEL-001 新增包无需修改根配置即被纳入 > test 覆盖新增包：探针包内的测试会被收集并执行  825ms\n   ✓ SKEL-001 新增包无需修改根配置即被纳入 > 布局之外的目录不被当作 workspace 包，也不使命令失败  1076ms\n\n Test Files  1 passed (1)\n      Tests  8 passed (8)\n   Start at  05:37:43\n   Duration  4.70s (transform 26ms, setup 0ms, collect 25ms, tests 4.44s, environment 0ms, prepare 52ms)\n\n",
+  "stderr": "",
+  "startedAt": "2026-08-20T12:37:42.750Z",
+  "finishedAt": "2026-08-20T12:37:48.224Z",
+  "durationMs": 5474,
+  "status": "passed",
+  "digest": "3e366e8d450e86a9b051d6c5aa87139034bb0e6775fe2eb6e2aeb2b257f29760"
+}

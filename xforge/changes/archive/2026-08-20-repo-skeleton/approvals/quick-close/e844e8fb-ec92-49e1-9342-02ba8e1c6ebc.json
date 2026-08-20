@@ -1,0 +1,32 @@
+{
+  "apiVersion": "xforge.dev/v1alpha2",
+  "kind": "ApprovalReceipt",
+  "receiptId": "e844e8fb-ec92-49e1-9342-02ba8e1c6ebc",
+  "change": "repo-skeleton",
+  "flow": "quick",
+  "stage": "ready-to-archive",
+  "transition": "archive",
+  "policyId": "quick-close",
+  "stateRevision": "34cd268f697b3f2c2a91701da3a9313e56527dfebd4cecf47581273390650daf",
+  "contentRevision": "2cd7c2e39bea64c692750b76f769fea95fe47459853a3af9431687a8a1bc149d",
+  "policySnapshotDigest": "690a8284442ebbe707fddd7a1d41b07e64caab960fc15f1a36436ef554211b5a",
+  "gitBase": "834016494465778bb86724d25086f06b232e7d4d",
+  "gitHead": "1f2ebb84ccfcc877125a90591712780113b3ad16",
+  "governingDigest": "600f68a22147ae5e436605a461b001c1eb3de9dcb31ec97922925612a711a5d9",
+  "governingRevision": "4f93aca0a1a94b9c137105c2ec34cce96acdaacaa62780da5c4a772656a28609",
+  "decision": "approve",
+  "approver": {
+    "id": "xbitshans",
+    "provider": "local",
+    "role": "maintainer",
+    "type": "human"
+  },
+  "decidedAt": "2026-08-20T12:37:07.022Z",
+  "reason": "good",
+  "expiresAt": "2026-08-27T12:37:07.022Z",
+  "attestation": {
+    "method": "cli-terminal",
+    "respondedAt": "2026-08-20T12:37:07.022Z"
+  },
+  "digest": "9b669d0d722341571fbd26de4a600a25b353bbe16b4a3d315c6a0e14e81d8faa"
+}

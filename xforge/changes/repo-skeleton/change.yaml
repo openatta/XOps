@@ -1,0 +1,17 @@
+flow: quick
+classification:
+  risk: low
+  security: false
+  privacy: false
+  publicApi: false
+  dataMigration: false
+scope:
+  modules: [root]
+  paths:
+    - package.json
+    - pnpm-workspace.yaml
+    - tsconfig*.json
+    - "*.config.*"
+    - .github/**
+    - .gitignore
+    - .nvmrc

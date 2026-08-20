@@ -1,0 +1,144 @@
+{
+  "apiVersion": "xforge.dev/v1alpha2",
+  "kind": "AuditIndex",
+  "version": 3,
+  "change": "repo-skeleton",
+  "generatedAt": "2026-08-20T10:48:43.702Z",
+  "chain": {
+    "anchor": null,
+    "head": "2b7694c51e4378c2ca521c062cf00c7c3d5bbf475ab0f55d8711f92695d0445d",
+    "eventCount": 8,
+    "valid": true,
+    "prunedCount": 0,
+    "prunedThrough": null
+  },
+  "delivery": {
+    "remoteConfigured": true,
+    "pending": 4,
+    "delivered": 0
+  },
+  "eventTypes": {
+    "gate.before": {
+      "count": 1,
+      "lastTimestamp": "2026-08-20T10:26:40.849Z",
+      "lastHash": "6a8a5e93db227061cb1d8ea35911df06a9a4c505b8d3b1c94fe642e79f17f96e"
+    },
+    "audit.delivery": {
+      "count": 4,
+      "lastTimestamp": "2026-08-20T10:48:43.696Z",
+      "lastHash": "2b7694c51e4378c2ca521c062cf00c7c3d5bbf475ab0f55d8711f92695d0445d"
+    },
+    "gate.after": {
+      "count": 1,
+      "lastTimestamp": "2026-08-20T10:26:40.883Z",
+      "lastHash": "c0807090490fc01a836be11f77a26ae9fa06c8e130ca97e6214959053327d789"
+    },
+    "stage.entering": {
+      "count": 1,
+      "lastTimestamp": "2026-08-20T10:48:43.609Z",
+      "lastHash": "751207953ad1d6b4937f25a6a199fadca2f505534b6a26a7824323c7d1ad4cf2"
+    },
+    "stage.entered": {
+      "count": 1,
+      "lastTimestamp": "2026-08-20T10:48:43.690Z",
+      "lastHash": "9e103610f4aca03f6bc730cb04a1e8a269d1d65a4f9ceb8dee27a04f67369980"
+    }
+  },
+  "coverageGaps": [],
+  "runtimeEventCount": 0,
+  "events": [
+    {
+      "eventId": "0b5e75d1-5f6c-493a-b056-ae895d46053a",
+      "eventType": "gate.before",
+      "timestamp": "2026-08-20T10:26:40.849Z",
+      "plane": "workflow",
+      "stateRevision": "27ed8102bcaf557c15fc792c2dfa8ae9076b65b49c9a20e08a2cd1f6e200ee90",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "6e14df7ffe5175fd2c04e730cff561a6c6abeaff4811b16db7e22d87c702a827",
+      "hash": "6a8a5e93db227061cb1d8ea35911df06a9a4c505b8d3b1c94fe642e79f17f96e"
+    },
+    {
+      "eventId": "5e1dc62a-db58-4598-9c76-d99caeddf0c4",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T10:26:40.862Z",
+      "plane": "workflow",
+      "stateRevision": "27ed8102bcaf557c15fc792c2dfa8ae9076b65b49c9a20e08a2cd1f6e200ee90",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "6a8a5e93db227061cb1d8ea35911df06a9a4c505b8d3b1c94fe642e79f17f96e",
+      "hash": "e9d9bc2d31d21299471683c8ac1bcede4c3c09579abaee3ff7a64c36efaa7e1e"
+    },
+    {
+      "eventId": "29c88957-f4d5-4c92-a01a-3d1beeca6f87",
+      "eventType": "gate.after",
+      "timestamp": "2026-08-20T10:26:40.883Z",
+      "plane": "workflow",
+      "stateRevision": "27ed8102bcaf557c15fc792c2dfa8ae9076b65b49c9a20e08a2cd1f6e200ee90",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "6e14df7ffe5175fd2c04e730cff561a6c6abeaff4811b16db7e22d87c702a827",
+      "hash": "c0807090490fc01a836be11f77a26ae9fa06c8e130ca97e6214959053327d789"
+    },
+    {
+      "eventId": "dfd65a18-b127-42cc-b2c2-86ac1247b9fb",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T10:26:40.891Z",
+      "plane": "workflow",
+      "stateRevision": "27ed8102bcaf557c15fc792c2dfa8ae9076b65b49c9a20e08a2cd1f6e200ee90",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "c0807090490fc01a836be11f77a26ae9fa06c8e130ca97e6214959053327d789",
+      "hash": "338857d6353974fb990f4de26a170a5fa5e2005a62ec3915da0e15b1fe088b39"
+    },
+    {
+      "eventId": "afbb0356-ae55-43df-a3bc-31a902f7a028",
+      "eventType": "stage.entering",
+      "timestamp": "2026-08-20T10:48:43.609Z",
+      "plane": "workflow",
+      "stateRevision": "27ed8102bcaf557c15fc792c2dfa8ae9076b65b49c9a20e08a2cd1f6e200ee90",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "hash": "751207953ad1d6b4937f25a6a199fadca2f505534b6a26a7824323c7d1ad4cf2"
+    },
+    {
+      "eventId": "a677a079-2af9-4a2e-b78e-e6640c0da6b4",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T10:48:43.618Z",
+      "plane": "workflow",
+      "stateRevision": "27ed8102bcaf557c15fc792c2dfa8ae9076b65b49c9a20e08a2cd1f6e200ee90",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "751207953ad1d6b4937f25a6a199fadca2f505534b6a26a7824323c7d1ad4cf2",
+      "hash": "6173b08c3f51662ef2eaf700c4ac20787ef9a1c2c6aa513926ebe26495bc4794"
+    },
+    {
+      "eventId": "4361d08a-3e1f-47f0-be8a-9c8f43c139ca",
+      "eventType": "stage.entered",
+      "timestamp": "2026-08-20T10:48:43.690Z",
+      "plane": "workflow",
+      "stateRevision": "ec103b4230fe03949c1009c4db5ab1cbe895b557c43d97600e878aa8467c7875",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "928d52a4b576dbbc1a4f658237bbf26fa91a8cf9db2ec665674d94efa58ca93f",
+      "hash": "9e103610f4aca03f6bc730cb04a1e8a269d1d65a4f9ceb8dee27a04f67369980"
+    },
+    {
+      "eventId": "8fb970d6-21b8-40c8-9793-6d09cc535ec8",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T10:48:43.696Z",
+      "plane": "workflow",
+      "stateRevision": "ec103b4230fe03949c1009c4db5ab1cbe895b557c43d97600e878aa8467c7875",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "9e103610f4aca03f6bc730cb04a1e8a269d1d65a4f9ceb8dee27a04f67369980",
+      "hash": "2b7694c51e4378c2ca521c062cf00c7c3d5bbf475ab0f55d8711f92695d0445d"
+    }
+  ],
+  "eventsTruncated": false,
+  "governanceComplete": true,
+  "chainHead": "2b7694c51e4378c2ca521c062cf00c7c3d5bbf475ab0f55d8711f92695d0445d",
+  "chainValid": true,
+  "digest": "9b019ff8e06f9bead4d7ecfdbff51101865a23389eb3492ab076623c6ce9db94"
+}

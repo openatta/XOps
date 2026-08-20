@@ -1,5 +1,11 @@
 # 第三方参考代码（各自独立 clone，不纳入本仓库）
 3rds/
 
+# 依赖与构建产物
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
 # macOS
 .DS_Store

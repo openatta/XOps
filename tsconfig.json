@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "//": "include 用 glob 覆盖两个 workspace 位置，新增包无需修改本文件即被类型检查覆盖（SKEL-001）。根级 *.config.ts 一并纳入，顺带保证空仓库下也有输入文件。",
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "packages/**/*.tsx",
+    "*.config.ts"
+  ],
+  "exclude": ["**/node_modules", "**/dist", "**/coverage"]
+}

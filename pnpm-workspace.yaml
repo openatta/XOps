@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm 默认不执行依赖的构建脚本。esbuild 是 vitest 的传递依赖，需要它的
+# 安装脚本来放置平台二进制，不批准则测试命令无法运行。
+allowBuilds:
+  esbuild: true

@@ -1,0 +1,34 @@
+{
+  "protocolVersion": "2",
+  "schemaVersion": "1",
+  "gate": "structure",
+  "change": "repo-skeleton",
+  "flow": "quick",
+  "stage": "propose",
+  "stateRevision": "27ed8102bcaf557c15fc792c2dfa8ae9076b65b49c9a20e08a2cd1f6e200ee90",
+  "contentRevision": "a1a405d66c7d9b184c45f7e30377177c6d21341c3f1759438414836b7eb981ec",
+  "policySnapshotDigest": "690a8284442ebbe707fddd7a1d41b07e64caab960fc15f1a36436ef554211b5a",
+  "gitBase": "bf979861b913c2a3d08d591e1ddcf164eeea3e7e",
+  "gitHead": "155be6af84b473bd737323fa827542e460d26439",
+  "inputDigest": "5bfc2032ba25a0b716241073d16c6cc3a22e688085e7f7a8115e0b4f79a8031c",
+  "runner": {
+    "name": "@xforge/cli",
+    "version": "0.7.16",
+    "integrity": "sha256:b1343220589d7258710eebb878d21e4c1bf26f0f8a97bc1808480829899d5f19"
+  },
+  "command": [
+    "builtin:structure"
+  ],
+  "shell": false,
+  "workingDirectory": ".",
+  "exitCode": 0,
+  "timedOut": false,
+  "outputTruncated": false,
+  "stdout": "Structural validation passed.",
+  "stderr": "",
+  "startedAt": "2026-08-20T10:26:40.868Z",
+  "finishedAt": "2026-08-20T10:26:40.868Z",
+  "durationMs": 0,
+  "status": "passed",
+  "digest": "00e590113f1e6ce298b92f1d97a1b584ad66c97c9944919e512d73ec2541f22c"
+}

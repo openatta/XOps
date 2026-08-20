@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge Clarify"
+  short_description: "Resolve material ambiguity while keeping XForge planning Artifacts consistent"
+  default_prompt: "Use $xforge-clarify to resolve material ambiguity affecting scope, risk, or acceptance."

@@ -1,0 +1,46 @@
+# Why the Manifest is `ask` and not `deny`.
+#
+# `protected-files` used to deny `fs.write` on `xforge/manifest.yaml` outright. That contradicted a
+# shipped Skill: `xforge-scaffold`'s Authority section says it may "minimally update Manifest
+# scaffold selection ... when adding, removing, enabling, or disabling resources", and there is no
+# CLI command that edits `scaffold.skills` / `agents` / `rules` / `policies` / `hooks` / `gates` —
+# selecting a resource *is* a hand edit of this file. The policy denied the only way to do the job.
+#
+# Neither of the obvious narrowings actually resolves it:
+#
+#   - `match.stages: [apply, verify]` does not help. `commands/hook.ts` skips the stage filter when
+#     no Change is in context (`match.stages?.length && stage && ...`), and `xforge-scaffold`
+#     normally runs with no Change at all — so a stage-scoped deny still fires on exactly the call
+#     it was meant to permit. It would also weaken the deny for every other path in the policy,
+#     since `match` scopes the whole rule, not one path.
+#   - `exceptActors` cannot name a Skill. The actor comes from the host's sub-agent identity
+#     (`agent_type` / `subagent_type`); `xforge-scaffold` is a Skill the Main Agent follows, so its
+#     actor is the generic Main Agent. Excepting that would except the Main Agent from the whole
+#     policy, including the Constitution and the audit chain.
+#
+# So the Manifest is split out and downgraded to `ask`: the write is possible, but never silent. A
+# human sees a prompt naming the file before any Skill changes resource selection, which is exactly
+# the confirmation `xforge-scaffold`'s own Authority section already promises to obtain before
+# install. The Integrator is excepted because it writes shared governance assets as the declared
+# single writer inside a governed Change.
+#
+# `ask` degrades the same way `protected-files` does: `exceptActors` has no static representation on
+# any host, so this policy is enforced by the XForge runtime Hook bridge, not by the target's own
+# permission file, and `xforge install` reports that omission rather than hiding it. On a target
+# with no `ask` verdict, `resolveUnaskable` decides what an unaskable ask becomes.
+apiVersion: xforge.dev/v1alpha2
+kind: PermissionPolicy
+metadata:
+  name: protected-manifest
+  version: 1
+spec:
+  capability: fs.write
+  effect: ask
+  match:
+    paths:
+      - xforge/manifest.yaml
+  exceptActors: [integrator]
+  reason: >-
+    xforge/manifest.yaml is a shared governance asset that xforge-scaffold must edit to select or
+    deselect a resource. The write is allowed but must be confirmed by a human, never made silently
+    and never by a Worker implementing a work package.

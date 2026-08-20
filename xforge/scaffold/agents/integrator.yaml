@@ -1,0 +1,19 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Agent
+metadata:
+  name: integrator
+  version: 2
+spec:
+  role: Single-writer work-package integration specialist
+  instructions: integrator.md
+  skills:
+    - xforge-apply
+    - xforge-verify
+  tools:
+    allow: [read, search, write, test]
+  delegation:
+    callableBy: [main]
+    maxConcurrency: 1
+  model:
+    class: reasoning
+    fallback: default

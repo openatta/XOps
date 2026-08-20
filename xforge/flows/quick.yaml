@@ -1,0 +1,103 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Flow
+metadata:
+  name: quick
+  version: 4
+  description: Fast delivery for low-risk, single-module, clearly scoped, and easily reversible changes
+policy:
+  assuranceLevel: quick
+  eligibleWhen:
+    risk: [low]
+    criticalImpacts: forbidden
+    maxModules: 1
+artifacts:
+  - id: proposal
+    generates: proposal.md
+    description: Explain the reason, boundaries, and Flow choice
+    instruction: Describe Why, Scope, Non-goals, Success criteria, impact, rollback, and the factual basis for choosing Quick.
+    outline: |
+      ## Why
+      ## Scope
+      ## Non-goals
+      ## Success criteria
+      ## Flow choice
+      ## Impact and rollback
+  - id: delta-specs
+    generates: specs/**/*.md
+    description: Define observable requirement and scenario deltas
+    instruction: Use stable Requirement IDs for success, failure, boundary, and compatibility scenarios without implementation detail.
+    outline: |
+      ## ADDED Requirements
+      ### Requirement: <REQ-ID> <name>
+      #### Scenario: <name>
+      - **WHEN** ...
+      - **THEN** ...
+  - id: assurance
+    generates: assurance.md
+    description: Record verification against requirements, tests, and constraints
+    instruction: Summarize completeness, correctness, coherence, and Gates with traceable evidence.
+    outline: |
+      ## Completeness
+      ## Correctness
+      ## Coherence
+      ## Gates and evidence
+      ## Findings
+    markers:
+      - id: verification-coverage
+        section: Completeness
+        role: requirement-coverage
+governance:
+  approvalPolicies:
+    - id: quick-close
+      minApprovers: 1
+      roles: [owner, maintainer]
+      separationOfDuties: false
+      providers: [local, enterprise-approvals]
+  # Kept identical to `terminal.archive.auditPolicy` below. `xforge audit verify` reads this block
+  # while archive resolves `terminal.archive.auditPolicy ?? governance.audit`; when the two disagree
+  # the command reports a Change as audit-complete that archive then rejects. Quick's archive needs
+  # a `quick-close` approval, so `approval.decided` belongs in both.
+  audit:
+    requiredEventTypes: [gate.after, stage.entered, approval.decided]
+    runtimeCoverage: optional
+    remoteDelivery: optional
+stages:
+  - id: propose
+    skill: xforge-propose
+    authority: planning-write
+    requires: []
+    produces: [proposal, delta-specs]
+    gates: [structure]
+
+  - id: apply
+    skill: xforge-apply
+    authority: implementation-write
+    requires: [propose]
+    produces: []
+    reworkTo: [propose]
+  # Quick has no Constitution ledger. It is the Flow for a trivial, single-module, low-risk Change,
+  # and it has no Check Stage to answer the ledger before implementation; requiring it at Verify
+  # bought a per-principle certification on Changes whose whole point is that they carry no
+  # principle-level risk. Solid and Major both keep it, at Check, where a Change large enough to
+  # need it is designed before it is certified.
+  - id: verify
+    skill: xforge-verify
+    authority: assurance-write
+    requires: [apply]
+    produces: [assurance]
+    gates: [structure, unit-tests]
+    reworkTo: [apply]
+    exit:
+      conditions:
+        verificationReceipt: passed
+terminal:
+  archive:
+    handler: xforge-verify
+    authority: archive-write
+    requires: [verify]
+    syncSpecs: true
+    approvals: [quick-close]
+    auditPolicy:
+      requiredEventTypes: [gate.after, stage.entered, approval.decided]
+      runtimeCoverage: optional
+      remoteDelivery: optional

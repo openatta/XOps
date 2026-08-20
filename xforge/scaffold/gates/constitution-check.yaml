@@ -1,0 +1,10 @@
+apiVersion: xforge.dev/v1alpha1
+kind: Gate
+metadata:
+  name: constitution-check
+  version: 1
+spec:
+  required: true
+  builtin: constitution-check
+  timeoutSeconds: 30
+  evidence: constitution-check.json

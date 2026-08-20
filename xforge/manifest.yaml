@@ -1,0 +1,109 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Project
+metadata:
+  name: xforge-project
+project:
+  layout: single
+  paths:
+    specs: xforge/specs
+    changes: xforge/changes
+  modules:
+    - id: root
+      path: .
+      kind: application
+scaffold:
+  version: 0.7.16
+  language: zh-CN
+  source:
+    type: npm
+    package: "@xforge/cli"
+    version: 0.7.16
+  skills:
+    - xforge-propose
+    - xforge-clarify
+    - xforge-design
+    - xforge-check
+    - xforge-apply
+    - xforge-verify
+    - xforge-status
+    - xforge-revise
+    - xforge-scaffold
+    - xforge-kanban
+    - xforge-architect
+    - xforge-upgrade-scaffold
+  agents:
+    - worker
+    - integrator
+    - reviewer
+  rules:
+    - governance-assets-are-integrator-only
+    - observable-requirements-are-tested
+    - design-decisions-need-a-human
+    - prefer-small-explicit-contracts
+    - design-within-the-declared-architecture
+  policies:
+    - protected-files
+    - protected-manifest
+  # runtime-audit is intentionally unselected: audit recording is unconditional inside the CLI, and
+  # its `action.builtin: audit` has no dispatcher branch, so selecting it changes nothing (see
+  # scaffold/hooks/runtime-audit.yaml, which stays on disk as the example to re-select once a
+  # builtin dispatcher exists).
+  hooks: []
+  gates:
+    - structure
+    - check-findings
+    - constitution-check
+    - unit-tests
+    - security-scan
+  mcpServers:
+    - enterprise-approvals
+scripts:
+  - project-context
+xforge:
+  source: npm
+  package: "@xforge/cli"
+  version: 0.7.16
+  protocol: "2"
+flow: solid
+targets:
+  - codex
+  - claude
+  - cursor
+  - opencode
+  - github-copilot
+install:
+  conflictPolicy: fail
+  prune: managed-only
+  commitGeneratedFiles: true
+# XForge supports exactly two approval mechanisms: the CLI's own interactive terminal (always
+# available, not listed here) and an mcp provider reached over the Model Context Protocol. There is
+# no signed-file-import path. `enterprise-approvals` is the provider Major's policies require; its
+# matching McpServer resource (scaffold/mcp-servers/enterprise-approvals.yaml) is a placeholder — it
+# ships with a command that does not exist, on purpose. Replace it with the approval system your
+# organization actually runs before Major can produce a real decision; until then,
+# `xforge approve --provider enterprise-approvals` fails loudly with XFORGE_APPROVAL_MCP_TOKEN_MISSING
+# (no token is configured by default; XFORGE_APPROVAL_MCP_CONNECTION_FAILED would only occur after a
+# token is set but the server is still unreachable) instead of silently pretending to work.
+approvals:
+  providers:
+    - id: enterprise-approvals
+      type: mcp
+      mcpServer: enterprise-approvals
+      roles: [owner, maintainer, security]
+audit:
+  redaction: strict
+  localRetentionDays: 30
+  # Remote audit delivery is a documented enterprise opt-in, not a shipped default. The env-var
+  # names below are the whole contract: export `XFORGE_AUDIT_ENDPOINT` (plus a token and/or HMAC
+  # secret if the sink wants them) and every workflow event is delivered to it. `requiredFor` is
+  # the separate question of whether delivery is *mandatory to archive*, and it ships empty on
+  # purpose: with no endpoint configured, `core/audit.ts` leaves every event `deliveryState:
+  # 'pending'`, and any assurance level named here would be permanently blocked at archive by
+  # `audit:remote-pending` — a state `xforge audit retry` cannot clear without a live receiver.
+  # Add an assurance level here only once the endpoint it needs actually exists.
+  remote:
+    endpointEnv: XFORGE_AUDIT_ENDPOINT
+    tokenEnv: XFORGE_AUDIT_TOKEN
+    hmacSecretEnv: XFORGE_AUDIT_HMAC_SECRET
+    timeoutSeconds: 5
+    requiredFor: []

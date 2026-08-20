@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge Revise"
+  short_description: "Revise XForge planning Artifacts consistently and report invalidated downstream work"
+  default_prompt: "Use $xforge-revise to revise the current Change planning and report invalidated work."

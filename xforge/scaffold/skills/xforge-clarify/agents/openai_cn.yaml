@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge 澄清"
+  short_description: "解析 XForge Major Change 的关键歧义并保持规格材料一致"
+  default_prompt: "使用 $xforge-clarify 解决当前 Change 中会影响范围、风险或验收的关键歧义。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge Planning Check"
+  short_description: "Review Major Change planning for completeness and feasibility"
+  default_prompt: "Use $xforge-check to review the current Major Change planning Artifacts."

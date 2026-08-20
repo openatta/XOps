@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge Scaffold"
+  short_description: "Customize and install project XForge Agent capabilities and governance assets"
+  default_prompt: "Use $xforge-scaffold to customize this project's skills, agents, rules, hooks, or gates."

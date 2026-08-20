@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "xforge hook dispatch --target claude --event agent.tool.before",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

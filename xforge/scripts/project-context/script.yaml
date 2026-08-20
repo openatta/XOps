@@ -1,0 +1,14 @@
+apiVersion: xforge.dev/v1alpha1
+kind: Script
+metadata:
+  name: project-context
+  version: 1
+spec:
+  runtime: node
+  entry: main.ts
+  arguments: []
+  workingDirectory: .
+  timeoutSeconds: 30
+  input: Project root from the current working directory
+  output: JSON summary on stdout
+  sideEffects: none

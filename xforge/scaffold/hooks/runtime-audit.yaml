@@ -1,0 +1,18 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Hook
+metadata:
+  name: runtime-audit
+  version: 1
+spec:
+  # Placeholder: no dispatcher in the codebase executes `action.builtin: 'audit'` hooks yet —
+  # runScriptHooks (adapters/capabilities.ts) only matches hooks whose action has a scriptRef —
+  # so `enabled` has no effect either way. Do not flip this to `true` expecting a behavior
+  # change until that dispatch path is implemented.
+  enabled: false
+  plane: runtime
+  event: agent.tool.after
+  action:
+    builtin: audit
+  failurePolicy: spool
+  timeoutSeconds: 10
+  matcher: "*"

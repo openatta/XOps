@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge Status"
+  short_description: "Explain XForge Change stage progress, blockers, and legal next actions"
+  default_prompt: "Use $xforge-status to explain the current Change stage, blockers, and next actions."

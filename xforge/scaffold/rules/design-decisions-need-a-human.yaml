@@ -1,0 +1,31 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Rule
+metadata:
+  name: design-decisions-need-a-human
+  version: 2
+spec:
+  severity: must
+  # "Before implementation begins" rather than "before the Check Stage is entered".
+  #
+  # The old wording named a moment only the solid Flow has. solid collects `planning-solid` at the
+  # design exit, so there the Check Stage really is the boundary. major's first human approval is
+  # `implementation-major` at the check exit — later in the Stage list, and stricter, but it made the
+  # Rule's own sentence false under the Flow most likely to need it. quick has no pre-implementation
+  # approval at all, and under quick this Rule is instruction only; `xforge state` now says so
+  # (coverage: unenforceable) instead of reporting enforcement that cannot fire.
+  instruction: >-
+    A Change may not enter implementation on an Agent's own reading of the Design. A human records
+    the planning decision before implementation begins.
+  scope:
+    stages:
+      - design
+      - check
+  enforcement:
+    # approved: satisfied by a current-revision human approval receipt from whichever of these
+    # policies the active Flow defines. Listing both is what makes the Rule enforceable in solid and
+    # major alike; a ref naming no policy in the running Flow is ignored rather than counted.
+    gateRefs: []
+    policyRefs: []
+    approvalRefs:
+      - planning-solid
+      - implementation-major

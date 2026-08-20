@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge 脚手架"
+  short_description: "定制并安装当前项目的 XForge Agent 能力与治理资产"
+  default_prompt: "使用 $xforge-scaffold 定制当前项目的 XForge skills、agents、rules、hooks 或 gates。"

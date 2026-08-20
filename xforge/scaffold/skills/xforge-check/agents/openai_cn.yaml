@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge 规划检查"
+  short_description: "审查 XForge Major Change 规划材料的完整性和可实施性"
+  default_prompt: "使用 $xforge-check 审查当前 Major Change 的规划材料。"

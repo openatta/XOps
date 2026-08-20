@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge 状态"
+  short_description: "解释 XForge Change 的阶段进度阻塞项和合法下一动作"
+  default_prompt: "使用 $xforge-status 解释当前 Change 的阶段、阻塞项和下一动作。"

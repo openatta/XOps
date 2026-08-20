@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge 设计"
+  short_description: "为 XForge Solid 或 Major Change 形成受治理技术设计"
+  default_prompt: "使用 $xforge-design 为当前 Change 形成技术设计与验证边界。"

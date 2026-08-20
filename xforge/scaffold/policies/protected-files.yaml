@@ -1,0 +1,41 @@
+# This policy is an advisory guardrail on an Agent's own tool calls, not a structural security
+# boundary: the runtime Hook that enforces it (`fs.write` capability) only inspects a tool call's
+# structured file-path parameter (e.g. an editor tool's `file_path`). A `shell` capability call
+# whose command happens to write one of these paths indirectly — `cat > xforge/constitution.md`,
+# `tee`, `cp`, a script that opens the file itself — is matched against `match.commands` glob
+# patterns on the whole command string, not the file it actually touches, so it is not caught here.
+# Compare this to `xforge approve`'s anti-self-approval design, which is structural (the decision
+# word can only come from a live terminal prompt, never argv or a tool call) — this policy is not
+# that kind of guarantee. Treat it as a guardrail an honest Agent respects, backed by the
+# `constitution-check` Gate, Git history, and the audit chain for after-the-fact attribution, not
+# as something that makes a write to these paths impossible.
+apiVersion: xforge.dev/v1alpha2
+kind: PermissionPolicy
+metadata:
+  name: protected-files
+  version: 1
+spec:
+  capability: fs.write
+  effect: deny
+  match:
+    # Kept in exact 1:1 alignment with the `scope.paths` of the
+    # `governance-assets-are-integrator-only` Rule, which declares this policy as its enforcement:
+    # a Rule that claims a path this policy does not cover misreports it as guarded.
+    #
+    # Deliberately NOT denied:
+    #   - xforge/scaffold/**  the xforge-scaffold Skill legitimately authors resources there.
+    #   - xforge/changes/**   xforge-propose/xforge-apply and the other lifecycle Skills write
+    #                         Change content there through normal governed Changes.
+    #   - xforge/manifest.yaml  moved to the `protected-manifest` policy, which asks instead of
+    #                         denying. See that file for why; this list stays unconditional.
+    # Denying any of them would break those workflows, not harden them.
+    paths:
+      - xforge/constitution.md
+      - xforge/specs/**
+      - xforge/lock.yaml
+      - xforge/flows/**
+      - xforge/.audit/**
+  exceptActors: [integrator]
+  reason: >-
+    Shared governance files may be written only by the Integrator, an explicit XForge transaction,
+    or the CLI itself. Flow definitions and the audit chain are CLI-owned; no Skill authors them.

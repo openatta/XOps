@@ -1,0 +1,24 @@
+# Runs what this project declared under `manifest.verification.security-scan`, and refuses when it
+# declared nothing.
+#
+# This Gate used to be `npm audit` behind a guard that exited 0 when there was no
+# `package.json`. The guard was itself a fix — without it a non-Node project got a permanent,
+# false *failure*, because npm exits ENOLOCK rather than the 127 the runner reads as "tool
+# missing". But it turned a loud wrong answer into a quiet one: every Rust, Go and Python project
+# got a Gate reporting `passed` having asserted nothing, and with it a must-level Rule whose only
+# enforcement was this Gate, a verification receipt citing its digest, and an archive whose
+# mandatory Gate was empty.
+#
+# XForge does not know how any given project verifies itself, and no list of languages inside the
+# CLI would change that — it would only move the edge. So the project says, in any language, and
+# an unanswered question stays visible instead of being reported as a pass.
+apiVersion: xforge.dev/v1alpha1
+kind: Gate
+metadata:
+  name: security-scan
+  version: 3
+spec:
+  required: true
+  builtin: declared
+  timeoutSeconds: 900
+  evidence: security.json

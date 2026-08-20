@@ -1,0 +1,19 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Rule
+metadata:
+  name: observable-requirements-are-tested
+  version: 1
+spec:
+  severity: must
+  instruction: >-
+    Every externally observable requirement added or modified by a Change must have automated
+    verification. A requirement whose only evidence is prose is not verified.
+  scope:
+    paths:
+      - src/**
+      - tests/**
+  enforcement:
+    # verified: a Gate produces revision-bound Evidence for this Rule.
+    gateRefs:
+      - unit-tests
+    policyRefs: []

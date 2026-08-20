@@ -1,0 +1,33 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Rule
+metadata:
+  name: governance-assets-are-integrator-only
+  version: 1
+spec:
+  severity: must
+  instruction: >-
+    Shared governance assets (Constitution, canonical Specs, Manifest, Lock, Flow definitions, the
+    audit chain) are written by the Integrator, an explicit XForge transaction, or the CLI itself,
+    never by a Worker implementing a work package. Scaffold resources under xforge/scaffold/ and
+    Change content under xforge/changes/ are written by the governing Skills and are intentionally
+    outside this Rule's scope.
+  scope:
+    # Mirrors the union of protected-files' deny list and protected-manifest's ask list exactly.
+    # Scaffold resources and Change content are edited through normal governed Changes
+    # (xforge-scaffold, xforge-propose/xforge-apply) and are deliberately absent from all three
+    # lists — declaring a path here that no policy covers would misreport it as guarded.
+    paths:
+      - xforge/constitution.md
+      - xforge/specs/**
+      - xforge/manifest.yaml
+      - xforge/lock.yaml
+      - xforge/flows/**
+      - xforge/.audit/**
+  enforcement:
+    # guarded: a live PermissionPolicy intercepts the write at the tool call. protected-files
+    # refuses it outright; protected-manifest requires a human confirmation instead, because
+    # xforge-scaffold must edit the Manifest to select a resource and no CLI command does it.
+    gateRefs: []
+    policyRefs:
+      - protected-files
+      - protected-manifest

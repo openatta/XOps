@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge 修订"
+  short_description: "一致修订 XForge Change 规划材料并报告下游失效范围"
+  default_prompt: "使用 $xforge-revise 修订当前 Change 的规划材料并报告失效范围。"

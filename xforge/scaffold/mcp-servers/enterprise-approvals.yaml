@@ -1,0 +1,16 @@
+apiVersion: xforge.dev/v1alpha2
+kind: McpServer
+metadata:
+  name: enterprise-approvals
+  version: 1
+spec:
+  # Placeholder. XForge ships no enterprise approval server of its own — replace `command` (or
+  # switch to `transport: http` with a `url`) with the approval system your organization actually
+  # runs, and set XFORGE_ENTERPRISE_APPROVALS_TOKEN to a credential it accepts. Left as-is,
+  # `xforge approve --provider enterprise-approvals` fails with XFORGE_APPROVAL_MCP_TOKEN_MISSING
+  # (no token is configured by default; XFORGE_APPROVAL_MCP_CONNECTION_FAILED would only occur
+  # after a token is set but the server is still unreachable) instead of silently pretending to work.
+  transport: stdio
+  command: ["xforge-enterprise-approvals-server-not-configured"]
+  authTokenEnv: XFORGE_ENTERPRISE_APPROVALS_TOKEN
+  timeoutSeconds: 30

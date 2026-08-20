@@ -1,0 +1,18 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Agent
+metadata:
+  name: worker
+  version: 2
+spec:
+  role: Isolated work-package implementation worker
+  instructions: worker.md
+  skills:
+    - xforge-apply
+  tools:
+    allow: [read, search, write, test]
+  delegation:
+    callableBy: [main]
+    maxConcurrency: 3
+  model:
+    class: default
+    fallback: default

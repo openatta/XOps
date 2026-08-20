@@ -1,0 +1,948 @@
+{
+  "version": 2,
+  "protocolVersion": "2",
+  "generatedAt": "2026-08-20T06:20:50.248Z",
+  "manifestSelectionDigest": "77ac60c0a0eb244cf139d1b66a681508e09e7b0d77d1f8c4402967b45999ec1e",
+  "manifestTargets": [
+    "codex",
+    "claude",
+    "cursor",
+    "opencode",
+    "github-copilot"
+  ],
+  "scaffoldIdentity": "d5a77235ad2c619137f0955a453c4e08e8caf9c5bb2b269b51bf32f0da01a422",
+  "cliIdentity": "c76d871d48f253fd7d7c8e7738984373d749e1acde03a320a19f7d0724ab3c3f",
+  "targets": {
+    "claude": {
+      "adapterVersion": "3",
+      "installedAt": "2026-08-20T06:20:50.248Z",
+      "lastUpdatedAt": "2026-08-20T06:20:50.248Z",
+      "lastSyncedAt": null,
+      "files": {
+        ".claude/agents/integrator.md": {
+          "source": "agent:integrator",
+          "target": "claude",
+          "resource": {
+            "kind": "agent",
+            "id": "integrator"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/agents/integrator.yaml",
+              "mtimeMs": 1787206849936.0325,
+              "size": 388,
+              "digest": "a236ec1c0750c62b45530427f808dbab2e4ee9e85746e3d87f77a321fc42c74b"
+            },
+            {
+              "path": "xforge/scaffold/agents/integrator_cn.md",
+              "mtimeMs": 1787206849933.5703,
+              "size": 1314,
+              "digest": "a39abf9829cfd566854e1373581c734b8edd44ef16d7884572a079be31459ec8"
+            }
+          ],
+          "renderVersion": "claude:agent:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "49686ec23a36169bef43ffb7e5ba78adaad672c827cb4cdb617f5463afc745d4",
+          "lastInstalledDigest": "49686ec23a36169bef43ffb7e5ba78adaad672c827cb4cdb617f5463afc745d4"
+        },
+        ".claude/agents/reviewer.md": {
+          "source": "agent:reviewer",
+          "target": "claude",
+          "resource": {
+            "kind": "agent",
+            "id": "reviewer"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/agents/reviewer.yaml",
+              "mtimeMs": 1787206849939.7732,
+              "size": 2076,
+              "digest": "b9141fb38d61e3d66fbaa0f6361aed8d671057503f6b5043adf6b4ce07c8b80c"
+            },
+            {
+              "path": "xforge/scaffold/agents/reviewer_cn.md",
+              "mtimeMs": 1787206849937.5886,
+              "size": 2008,
+              "digest": "cd1b2258a42d886852078987190f4e0f9fe4609be92dcce3c8f2e38b2b85e8c4"
+            }
+          ],
+          "renderVersion": "claude:agent:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "53252df9e2900b286bebe7ba1f62a047472ca7e6dca08830ab407fdda7a70b17",
+          "lastInstalledDigest": "53252df9e2900b286bebe7ba1f62a047472ca7e6dca08830ab407fdda7a70b17"
+        },
+        ".claude/agents/worker.md": {
+          "source": "agent:worker",
+          "target": "claude",
+          "resource": {
+            "kind": "agent",
+            "id": "worker"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/agents/worker.yaml",
+              "mtimeMs": 1787206849942.9866,
+              "size": 352,
+              "digest": "92d9dbd0fe4e6c26256690cb88f4c919b97d9329d8eca48f6eb12aea824d8a80"
+            },
+            {
+              "path": "xforge/scaffold/agents/worker_cn.md",
+              "mtimeMs": 1787206849940.5457,
+              "size": 1722,
+              "digest": "dc082849b9f526ce136f881c7411cc020a5760c6204e30d446e47f42322372b5"
+            }
+          ],
+          "renderVersion": "claude:agent:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "f3f9da20a1cba4e3e50bbb991b985fdf8567e147891e6ae402ff63a757340491",
+          "lastInstalledDigest": "f3f9da20a1cba4e3e50bbb991b985fdf8567e147891e6ae402ff63a757340491"
+        },
+        ".claude/commands/xforge/apply.md": {
+          "source": "skill-command:xforge-apply",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-apply"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-apply/SKILL_cn.md",
+              "mtimeMs": 1787206849978.6003,
+              "size": 10284,
+              "digest": "c9e78a78bcf5baa6a7b053da6e59fb8ff98b22f59d86c973f512d9476212e9d9"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "48702dbb9c2623fe7f4c960d23f5ef63958f86c69fb4a44072ced8887d15b9fc",
+          "lastInstalledDigest": "48702dbb9c2623fe7f4c960d23f5ef63958f86c69fb4a44072ced8887d15b9fc"
+        },
+        ".claude/commands/xforge/architect.md": {
+          "source": "skill-command:xforge-architect",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-architect"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-architect/SKILL_cn.md",
+              "mtimeMs": 1787206849997.131,
+              "size": 6217,
+              "digest": "e5fee318eb20ad82054ac6514d05e9e549ccc2ca519446c7f43ee5788c9504f4"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "c6c51acd22bcaf08a50b51ff75725c920167175a55d8658eb755f653e86f7693",
+          "lastInstalledDigest": "c6c51acd22bcaf08a50b51ff75725c920167175a55d8658eb755f653e86f7693"
+        },
+        ".claude/commands/xforge/check.md": {
+          "source": "skill-command:xforge-check",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-check"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-check/SKILL_cn.md",
+              "mtimeMs": 1787206850029.0278,
+              "size": 7008,
+              "digest": "3e5b321e09cc8978bab28d789e9549f106b942d77445b2e1b6ae62426e4c9d87"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "f7c8fcafa6a9525d934acf460d18d17a67f8a8a1a4ac440d9d531fddb4f6f622",
+          "lastInstalledDigest": "f7c8fcafa6a9525d934acf460d18d17a67f8a8a1a4ac440d9d531fddb4f6f622"
+        },
+        ".claude/commands/xforge/clarify.md": {
+          "source": "skill-command:xforge-clarify",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-clarify"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-clarify/SKILL_cn.md",
+              "mtimeMs": 1787206850041.0842,
+              "size": 2584,
+              "digest": "4c9cb08f927a61090ed18f7301c26399fa0a67cc0597e5eb564ec07a6f75c8cf"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "d4f05fac44656bc6f507e6039c24a62975f92d96b60f58159ba94006d5fc7ef8",
+          "lastInstalledDigest": "d4f05fac44656bc6f507e6039c24a62975f92d96b60f58159ba94006d5fc7ef8"
+        },
+        ".claude/commands/xforge/design.md": {
+          "source": "skill-command:xforge-design",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-design"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-design/SKILL_cn.md",
+              "mtimeMs": 1787206850060.4702,
+              "size": 3566,
+              "digest": "257fa8079e71c19c5c0ff9e41e44f7752528713142d231bcfd66b2f532bfe609"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "29966d4cf673456d6ad06c515b0ab61fbab81036abb7a52ac50d8bc9feea5038",
+          "lastInstalledDigest": "29966d4cf673456d6ad06c515b0ab61fbab81036abb7a52ac50d8bc9feea5038"
+        },
+        ".claude/commands/xforge/kanban.md": {
+          "source": "skill-command:xforge-kanban",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-kanban"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-kanban/SKILL_cn.md",
+              "mtimeMs": 1787206850067.4478,
+              "size": 5223,
+              "digest": "001e21006947fb94b37e951b010f6ae33c2fbeb6ef23be3a77531636192824a8"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "24bf9efd1daf2c8992903ab826318e24d6afaffb59f4929ba4dabc94d98be377",
+          "lastInstalledDigest": "24bf9efd1daf2c8992903ab826318e24d6afaffb59f4929ba4dabc94d98be377"
+        },
+        ".claude/commands/xforge/propose.md": {
+          "source": "skill-command:xforge-propose",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-propose"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-propose/SKILL_cn.md",
+              "mtimeMs": 1787206850071.972,
+              "size": 5380,
+              "digest": "a83633f5ce0e9e73e080d94023f9e6c312b0f2dcb3d7aab5433c14c47a719898"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "9a31a684efd1032e1a6b9df2494aae28f8e1427439421d4cc393f1e5389b710f",
+          "lastInstalledDigest": "9a31a684efd1032e1a6b9df2494aae28f8e1427439421d4cc393f1e5389b710f"
+        },
+        ".claude/commands/xforge/revise.md": {
+          "source": "skill-command:xforge-revise",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-revise"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-revise/SKILL_cn.md",
+              "mtimeMs": 1787206850080.5046,
+              "size": 1698,
+              "digest": "50b136d665d664ce2eeec14ed7a834c7a4966c28186f9b65488ce89da212b296"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "d9b244ba7c6a08183836ae251da0c02adc27853af11c56781cd4ed937d624cfb",
+          "lastInstalledDigest": "d9b244ba7c6a08183836ae251da0c02adc27853af11c56781cd4ed937d624cfb"
+        },
+        ".claude/commands/xforge/scaffold.md": {
+          "source": "skill-command:xforge-scaffold",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-scaffold"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-scaffold/SKILL_cn.md",
+              "mtimeMs": 1787206850090.9338,
+              "size": 3842,
+              "digest": "8cdb84c22c0b6d71ec04aca18acb1b53855ba62bc38fc909d7ff1cc7e243ede7"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "da9412d30116494fdc92c371b9a348402f5d95f24b53f187110aa1a46574f415",
+          "lastInstalledDigest": "da9412d30116494fdc92c371b9a348402f5d95f24b53f187110aa1a46574f415"
+        },
+        ".claude/commands/xforge/status.md": {
+          "source": "skill-command:xforge-status",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-status"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-status/SKILL_cn.md",
+              "mtimeMs": 1787206850101.0132,
+              "size": 2795,
+              "digest": "d66369c925ba80518be86ddf33c08893aa171a6af8a0f33b9e329242e2e94e08"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "b6d5021e5d0715a204e60ab1a8af4793d120550b56390778126f85613289b681",
+          "lastInstalledDigest": "b6d5021e5d0715a204e60ab1a8af4793d120550b56390778126f85613289b681"
+        },
+        ".claude/commands/xforge/upgrade-scaffold.md": {
+          "source": "skill-command:xforge-upgrade-scaffold",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-upgrade-scaffold"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-upgrade-scaffold/SKILL_cn.md",
+              "mtimeMs": 1787206850105.9246,
+              "size": 5120,
+              "digest": "fbf56b5dd84a08cfc2e8dcf73b5389795514a616e33bce0efa8ad7a2c71c51ce"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "3bca91610d12f3ffdf116320a7ef4001f0c466f0dc5620c28fdb07943f49ff3d",
+          "lastInstalledDigest": "3bca91610d12f3ffdf116320a7ef4001f0c466f0dc5620c28fdb07943f49ff3d"
+        },
+        ".claude/commands/xforge/verify.md": {
+          "source": "skill-command:xforge-verify",
+          "target": "claude",
+          "resource": {
+            "kind": "skill-command",
+            "id": "xforge-verify"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-verify/SKILL_cn.md",
+              "mtimeMs": 1787206850110.818,
+              "size": 7551,
+              "digest": "6f6bef95e922b359644b87b035573dd22ce387e57815c3a0aa178912b6c9f068"
+            }
+          ],
+          "renderVersion": "claude:skill-command:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "4269bc5070c102380c50892684b328afad055771c3d3b23050c1b8f2688811be",
+          "lastInstalledDigest": "4269bc5070c102380c50892684b328afad055771c3d3b23050c1b8f2688811be"
+        },
+        ".claude/rules/design-decisions-need-a-human.md": {
+          "source": "rule:design-decisions-need-a-human",
+          "target": "claude",
+          "resource": {
+            "kind": "rule",
+            "id": "design-decisions-need-a-human"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/rules/design-decisions-need-a-human.yaml",
+              "mtimeMs": 1787206849966.8936,
+              "size": 1427,
+              "digest": "4f54fcbec7811d94a63165a5fef1e1c7b6c9c4d4025147c19618b923151c18d7"
+            }
+          ],
+          "renderVersion": "claude:rule:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "5c31c75f51fb4d6c3dc44d948b6ab78087678b7def735b28327715b839cad96b",
+          "lastInstalledDigest": "5c31c75f51fb4d6c3dc44d948b6ab78087678b7def735b28327715b839cad96b"
+        },
+        ".claude/rules/design-within-the-declared-architecture.md": {
+          "source": "rule:design-within-the-declared-architecture",
+          "target": "claude",
+          "resource": {
+            "kind": "rule",
+            "id": "design-within-the-declared-architecture"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/rules/design-within-the-declared-architecture.yaml",
+              "mtimeMs": 1787206849971.1985,
+              "size": 1475,
+              "digest": "3d97fd0af60127bbc46afc204dff225fa41b9d1475749b8e66772c69762f7b28"
+            }
+          ],
+          "renderVersion": "claude:rule:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "dff8ddc0c737013f92954127cac276ab17b4aab5c07f277311d4de428fe80770",
+          "lastInstalledDigest": "dff8ddc0c737013f92954127cac276ab17b4aab5c07f277311d4de428fe80770"
+        },
+        ".claude/rules/governance-assets-are-integrator-only.md": {
+          "source": "rule:governance-assets-are-integrator-only",
+          "target": "claude",
+          "resource": {
+            "kind": "rule",
+            "id": "governance-assets-are-integrator-only"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/rules/governance-assets-are-integrator-only.yaml",
+              "mtimeMs": 1787206849973.78,
+              "size": 1507,
+              "digest": "c0aba0ed91ef29e744f19ee9f93a374d4b73dd2d7f6518368ed1ce1836b8baba"
+            }
+          ],
+          "renderVersion": "claude:rule:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "c78741683892068b841223b4095ebb2da9b4448437b06d32c1e0df26addf566e",
+          "lastInstalledDigest": "c78741683892068b841223b4095ebb2da9b4448437b06d32c1e0df26addf566e"
+        },
+        ".claude/rules/observable-requirements-are-tested.md": {
+          "source": "rule:observable-requirements-are-tested",
+          "target": "claude",
+          "resource": {
+            "kind": "rule",
+            "id": "observable-requirements-are-tested"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/rules/observable-requirements-are-tested.yaml",
+              "mtimeMs": 1787206849975.5024,
+              "size": 512,
+              "digest": "31a19248041aedef5b83184209ecee32b5121fce98b9420b12848048ecfc3dc9"
+            }
+          ],
+          "renderVersion": "claude:rule:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "d7f0f4a66c771bccc6ca9fa3091955e1b09b433c460a5fad8efe89bd2f26229f",
+          "lastInstalledDigest": "d7f0f4a66c771bccc6ca9fa3091955e1b09b433c460a5fad8efe89bd2f26229f"
+        },
+        ".claude/rules/prefer-small-explicit-contracts.md": {
+          "source": "rule:prefer-small-explicit-contracts",
+          "target": "claude",
+          "resource": {
+            "kind": "rule",
+            "id": "prefer-small-explicit-contracts"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/rules/prefer-small-explicit-contracts.yaml",
+              "mtimeMs": 1787206849976.761,
+              "size": 473,
+              "digest": "6377d51cfbe4187fd79d86837a3da974a0219dab8a04647f22148d2609436053"
+            }
+          ],
+          "renderVersion": "claude:rule:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "113330169ed23a206031af45741f31e11662cfa752776a5251a503c7a8efef8b",
+          "lastInstalledDigest": "113330169ed23a206031af45741f31e11662cfa752776a5251a503c7a8efef8b"
+        },
+        ".claude/rules/xforge-bootstrap.md": {
+          "source": "builtin:bootstrap",
+          "target": "claude",
+          "resource": {
+            "kind": "builtin",
+            "id": "bootstrap"
+          },
+          "sources": [],
+          "renderVersion": "claude:builtin:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "8d5b85887ec26c57bf8b15ce494bbcabaa6eff5e619a9c8e655c4c3e5b6326d1",
+          "lastInstalledDigest": "8d5b85887ec26c57bf8b15ce494bbcabaa6eff5e619a9c8e655c4c3e5b6326d1"
+        },
+        ".claude/settings.json": {
+          "source": "governance:settings",
+          "target": "claude",
+          "resource": {
+            "kind": "governance",
+            "id": "settings"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/policies/protected-files.yaml",
+              "mtimeMs": 1787206849957.9414,
+              "size": 2384,
+              "digest": "990f970191c3e163e4b76e4cb89aaad7e26853bb735eb3d4b64d24dee0c89dcf"
+            },
+            {
+              "path": "xforge/scaffold/policies/protected-manifest.yaml",
+              "mtimeMs": 1787206849959.4646,
+              "size": 2710,
+              "digest": "e17df0fe5384399d0eae56515ff66a8e970134315b2c603a94db6f2c6a6145ef"
+            }
+          ],
+          "renderVersion": "claude:governance:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "892763e89e01a205ddd8c811e01830e0c11c3172e0aca7d9dfb02580b02c98a8",
+          "lastInstalledDigest": "892763e89e01a205ddd8c811e01830e0c11c3172e0aca7d9dfb02580b02c98a8",
+          "fragment": {
+            "format": "json",
+            "arrays": [
+              {
+                "path": [
+                  "hooks",
+                  "PreToolUse"
+                ],
+                "items": [
+                  {
+                    "matcher": "*",
+                    "hooks": [
+                      {
+                        "type": "command",
+                        "command": "xforge hook dispatch --target claude --event agent.tool.before",
+                        "timeout": 10
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "createdByXForge": true
+          }
+        },
+        ".claude/skills/xforge-apply/SKILL.md": {
+          "source": "skill:xforge-apply:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-apply"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-apply/SKILL_cn.md",
+              "mtimeMs": 1787206849978.6003,
+              "size": 10284,
+              "digest": "c9e78a78bcf5baa6a7b053da6e59fb8ff98b22f59d86c973f512d9476212e9d9"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "c9e78a78bcf5baa6a7b053da6e59fb8ff98b22f59d86c973f512d9476212e9d9",
+          "lastInstalledDigest": "c9e78a78bcf5baa6a7b053da6e59fb8ff98b22f59d86c973f512d9476212e9d9"
+        },
+        ".claude/skills/xforge-architect/SKILL.md": {
+          "source": "skill:xforge-architect:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-architect"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-architect/SKILL_cn.md",
+              "mtimeMs": 1787206849997.131,
+              "size": 6217,
+              "digest": "e5fee318eb20ad82054ac6514d05e9e549ccc2ca519446c7f43ee5788c9504f4"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "e5fee318eb20ad82054ac6514d05e9e549ccc2ca519446c7f43ee5788c9504f4",
+          "lastInstalledDigest": "e5fee318eb20ad82054ac6514d05e9e549ccc2ca519446c7f43ee5788c9504f4"
+        },
+        ".claude/skills/xforge-check/agents/openai.yaml": {
+          "source": "skill:xforge-check:agents/openai_cn.yaml",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-check"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-check/agents/openai_cn.yaml",
+              "mtimeMs": 1787206850025.321,
+              "size": 225,
+              "digest": "7de7a455eb11e04bc3a039fe34f2789c5987d28a1a3cda1ac54139a099e64466"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "7de7a455eb11e04bc3a039fe34f2789c5987d28a1a3cda1ac54139a099e64466",
+          "lastInstalledDigest": "7de7a455eb11e04bc3a039fe34f2789c5987d28a1a3cda1ac54139a099e64466"
+        },
+        ".claude/skills/xforge-check/SKILL.md": {
+          "source": "skill:xforge-check:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-check"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-check/SKILL_cn.md",
+              "mtimeMs": 1787206850029.0278,
+              "size": 7008,
+              "digest": "3e5b321e09cc8978bab28d789e9549f106b942d77445b2e1b6ae62426e4c9d87"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "3e5b321e09cc8978bab28d789e9549f106b942d77445b2e1b6ae62426e4c9d87",
+          "lastInstalledDigest": "3e5b321e09cc8978bab28d789e9549f106b942d77445b2e1b6ae62426e4c9d87"
+        },
+        ".claude/skills/xforge-clarify/agents/openai.yaml": {
+          "source": "skill:xforge-clarify:agents/openai_cn.yaml",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-clarify"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-clarify/agents/openai_cn.yaml",
+              "mtimeMs": 1787206850036.49,
+              "size": 254,
+              "digest": "5bb6ad724013e33a40ebf499de3b27a72734d761d036e8f6c9a1f356a56877fc"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "5bb6ad724013e33a40ebf499de3b27a72734d761d036e8f6c9a1f356a56877fc",
+          "lastInstalledDigest": "5bb6ad724013e33a40ebf499de3b27a72734d761d036e8f6c9a1f356a56877fc"
+        },
+        ".claude/skills/xforge-clarify/SKILL.md": {
+          "source": "skill:xforge-clarify:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-clarify"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-clarify/SKILL_cn.md",
+              "mtimeMs": 1787206850041.0842,
+              "size": 2584,
+              "digest": "4c9cb08f927a61090ed18f7301c26399fa0a67cc0597e5eb564ec07a6f75c8cf"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "4c9cb08f927a61090ed18f7301c26399fa0a67cc0597e5eb564ec07a6f75c8cf",
+          "lastInstalledDigest": "4c9cb08f927a61090ed18f7301c26399fa0a67cc0597e5eb564ec07a6f75c8cf"
+        },
+        ".claude/skills/xforge-design/agents/openai.yaml": {
+          "source": "skill:xforge-design:agents/openai_cn.yaml",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-design"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-design/agents/openai_cn.yaml",
+              "mtimeMs": 1787206850053.142,
+              "size": 224,
+              "digest": "171e7ca6facd661085d4eb405c8548f96eeac8cb7fb7867fed84f538d8c447d4"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "171e7ca6facd661085d4eb405c8548f96eeac8cb7fb7867fed84f538d8c447d4",
+          "lastInstalledDigest": "171e7ca6facd661085d4eb405c8548f96eeac8cb7fb7867fed84f538d8c447d4"
+        },
+        ".claude/skills/xforge-design/SKILL.md": {
+          "source": "skill:xforge-design:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-design"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-design/SKILL_cn.md",
+              "mtimeMs": 1787206850060.4702,
+              "size": 3566,
+              "digest": "257fa8079e71c19c5c0ff9e41e44f7752528713142d231bcfd66b2f532bfe609"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "257fa8079e71c19c5c0ff9e41e44f7752528713142d231bcfd66b2f532bfe609",
+          "lastInstalledDigest": "257fa8079e71c19c5c0ff9e41e44f7752528713142d231bcfd66b2f532bfe609"
+        },
+        ".claude/skills/xforge-kanban/scripts/git-activity.mjs": {
+          "source": "skill:xforge-kanban:scripts/git-activity.mjs",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-kanban"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-kanban/scripts/git-activity.mjs",
+              "mtimeMs": 1787206850065.3892,
+              "size": 12425,
+              "digest": "6f38bf9d7049a327c5a76eb9735d3ff463768d0f816dbc4d2188ecb7a47f4144"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "6f38bf9d7049a327c5a76eb9735d3ff463768d0f816dbc4d2188ecb7a47f4144",
+          "lastInstalledDigest": "6f38bf9d7049a327c5a76eb9735d3ff463768d0f816dbc4d2188ecb7a47f4144"
+        },
+        ".claude/skills/xforge-kanban/SKILL.md": {
+          "source": "skill:xforge-kanban:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-kanban"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-kanban/SKILL_cn.md",
+              "mtimeMs": 1787206850067.4478,
+              "size": 5223,
+              "digest": "001e21006947fb94b37e951b010f6ae33c2fbeb6ef23be3a77531636192824a8"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "001e21006947fb94b37e951b010f6ae33c2fbeb6ef23be3a77531636192824a8",
+          "lastInstalledDigest": "001e21006947fb94b37e951b010f6ae33c2fbeb6ef23be3a77531636192824a8"
+        },
+        ".claude/skills/xforge-propose/SKILL.md": {
+          "source": "skill:xforge-propose:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-propose"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-propose/SKILL_cn.md",
+              "mtimeMs": 1787206850071.972,
+              "size": 5380,
+              "digest": "a83633f5ce0e9e73e080d94023f9e6c312b0f2dcb3d7aab5433c14c47a719898"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "a83633f5ce0e9e73e080d94023f9e6c312b0f2dcb3d7aab5433c14c47a719898",
+          "lastInstalledDigest": "a83633f5ce0e9e73e080d94023f9e6c312b0f2dcb3d7aab5433c14c47a719898"
+        },
+        ".claude/skills/xforge-revise/agents/openai.yaml": {
+          "source": "skill:xforge-revise:agents/openai_cn.yaml",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-revise"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-revise/agents/openai_cn.yaml",
+              "mtimeMs": 1787206850076.2817,
+              "size": 235,
+              "digest": "30be605857cd369c2a2b92708b1675ce2af0f0859b932a8e82b605dbce9682e2"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "30be605857cd369c2a2b92708b1675ce2af0f0859b932a8e82b605dbce9682e2",
+          "lastInstalledDigest": "30be605857cd369c2a2b92708b1675ce2af0f0859b932a8e82b605dbce9682e2"
+        },
+        ".claude/skills/xforge-revise/SKILL.md": {
+          "source": "skill:xforge-revise:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-revise"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-revise/SKILL_cn.md",
+              "mtimeMs": 1787206850080.5046,
+              "size": 1698,
+              "digest": "50b136d665d664ce2eeec14ed7a834c7a4966c28186f9b65488ce89da212b296"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "50b136d665d664ce2eeec14ed7a834c7a4966c28186f9b65488ce89da212b296",
+          "lastInstalledDigest": "50b136d665d664ce2eeec14ed7a834c7a4966c28186f9b65488ce89da212b296"
+        },
+        ".claude/skills/xforge-scaffold/agents/openai.yaml": {
+          "source": "skill:xforge-scaffold:agents/openai_cn.yaml",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-scaffold"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-scaffold/agents/openai_cn.yaml",
+              "mtimeMs": 1787206850085.46,
+              "size": 253,
+              "digest": "490e18664e3d99cc88a413f2013d278579e937aaa0d09eac8c5c89b5d102f23a"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "490e18664e3d99cc88a413f2013d278579e937aaa0d09eac8c5c89b5d102f23a",
+          "lastInstalledDigest": "490e18664e3d99cc88a413f2013d278579e937aaa0d09eac8c5c89b5d102f23a"
+        },
+        ".claude/skills/xforge-scaffold/SKILL.md": {
+          "source": "skill:xforge-scaffold:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-scaffold"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-scaffold/SKILL_cn.md",
+              "mtimeMs": 1787206850090.9338,
+              "size": 3842,
+              "digest": "8cdb84c22c0b6d71ec04aca18acb1b53855ba62bc38fc909d7ff1cc7e243ede7"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "8cdb84c22c0b6d71ec04aca18acb1b53855ba62bc38fc909d7ff1cc7e243ede7",
+          "lastInstalledDigest": "8cdb84c22c0b6d71ec04aca18acb1b53855ba62bc38fc909d7ff1cc7e243ede7"
+        },
+        ".claude/skills/xforge-status/agents/openai.yaml": {
+          "source": "skill:xforge-status:agents/openai_cn.yaml",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-status"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-status/agents/openai_cn.yaml",
+              "mtimeMs": 1787206850095.3823,
+              "size": 235,
+              "digest": "fa9c9f1f01b0f75c0e827b428b227d630b363c8c953cc4d713d2709819007bfe"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "fa9c9f1f01b0f75c0e827b428b227d630b363c8c953cc4d713d2709819007bfe",
+          "lastInstalledDigest": "fa9c9f1f01b0f75c0e827b428b227d630b363c8c953cc4d713d2709819007bfe"
+        },
+        ".claude/skills/xforge-status/SKILL.md": {
+          "source": "skill:xforge-status:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-status"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-status/SKILL_cn.md",
+              "mtimeMs": 1787206850101.0132,
+              "size": 2795,
+              "digest": "d66369c925ba80518be86ddf33c08893aa171a6af8a0f33b9e329242e2e94e08"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "d66369c925ba80518be86ddf33c08893aa171a6af8a0f33b9e329242e2e94e08",
+          "lastInstalledDigest": "d66369c925ba80518be86ddf33c08893aa171a6af8a0f33b9e329242e2e94e08"
+        },
+        ".claude/skills/xforge-upgrade-scaffold/SKILL.md": {
+          "source": "skill:xforge-upgrade-scaffold:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-upgrade-scaffold"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-upgrade-scaffold/SKILL_cn.md",
+              "mtimeMs": 1787206850105.9246,
+              "size": 5120,
+              "digest": "fbf56b5dd84a08cfc2e8dcf73b5389795514a616e33bce0efa8ad7a2c71c51ce"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "fbf56b5dd84a08cfc2e8dcf73b5389795514a616e33bce0efa8ad7a2c71c51ce",
+          "lastInstalledDigest": "fbf56b5dd84a08cfc2e8dcf73b5389795514a616e33bce0efa8ad7a2c71c51ce"
+        },
+        ".claude/skills/xforge-verify/SKILL.md": {
+          "source": "skill:xforge-verify:SKILL_cn.md",
+          "target": "claude",
+          "resource": {
+            "kind": "skill",
+            "id": "xforge-verify"
+          },
+          "sources": [
+            {
+              "path": "xforge/scaffold/skills/xforge-verify/SKILL_cn.md",
+              "mtimeMs": 1787206850110.818,
+              "size": 7551,
+              "digest": "6f6bef95e922b359644b87b035573dd22ce387e57815c3a0aa178912b6c9f068"
+            }
+          ],
+          "renderVersion": "claude:skill:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "6f6bef95e922b359644b87b035573dd22ce387e57815c3a0aa178912b6c9f068",
+          "lastInstalledDigest": "6f6bef95e922b359644b87b035573dd22ce387e57815c3a0aa178912b6c9f068"
+        },
+        "CLAUDE.md": {
+          "source": "builtin:claude-memory",
+          "target": "claude",
+          "resource": {
+            "kind": "builtin",
+            "id": "claude-memory"
+          },
+          "sources": [],
+          "renderVersion": "claude:builtin:3",
+          "cliVersion": "0.7.16",
+          "protocolVersion": "2",
+          "desiredDigest": "f04bb6a881d456164c1ca94184b369d8981a00823725fffd6f22db9e97323edb",
+          "lastInstalledDigest": "f04bb6a881d456164c1ca94184b369d8981a00823725fffd6f22db9e97323edb",
+          "fragment": {
+            "format": "markers",
+            "begin": "<!-- XFORGE:BEGIN -->",
+            "end": "<!-- XFORGE:END -->",
+            "body": "## XForge\n\nBefore project work, read `xforge/XFORGE.md`. It carries the project bootstrap,\nthe CLI invocation contract, and the spec-driven parallel development policy.\n\nPer-topic XForge guidance is installed under `.claude/rules/`.",
+            "createdByXForge": true
+          }
+        }
+      }
+    }
+  }
+}

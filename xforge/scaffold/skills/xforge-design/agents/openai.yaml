@@ -1,0 +1,4 @@
+interface:
+  display_name: "XForge Design"
+  short_description: "Create a governed technical design for a Solid or Major Change"
+  default_prompt: "Use $xforge-design to define the current Change design and verification boundaries."

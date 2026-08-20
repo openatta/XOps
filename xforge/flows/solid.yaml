@@ -1,0 +1,166 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Flow
+metadata:
+  name: solid
+  version: 4
+  description: Stable and maintainable delivery for ordinary product and engineering changes
+policy:
+  assuranceLevel: solid
+  eligibleWhen:
+    risk: [low, medium]
+    criticalImpacts: forbidden
+artifacts:
+  - id: proposal
+    generates: proposal.md
+    description: Explain the reason, boundaries, and Flow choice
+    instruction: Describe Why, Scope, Non-goals, Success criteria, impact, rollback, and the factual basis for choosing Solid.
+    outline: |
+      ## Why
+      ## Scope
+      ## Non-goals
+      ## Success criteria
+      ## Flow choice
+      ## Impact and rollback
+  - id: delta-specs
+    generates: specs/**/*.md
+    description: Define observable requirement and scenario deltas
+    instruction: Use stable Requirement IDs for success, failure, boundary, and compatibility scenarios without implementation detail.
+    outline: |
+      ## ADDED Requirements
+      ### Requirement: <REQ-ID> <name>
+      #### Scenario: <name>
+      - **WHEN** ...
+      - **THEN** ...
+  - id: design
+    generates: design.md
+    description: Record the technical approach, alternatives, and verification notes
+    instruction: Cover current state, target integration points, decisions, failure modes, compatibility, migration, rollback, and verification without becoming a file-by-file task list.
+    outline: |
+      ## Context
+      ## Goals and non-goals
+      ## Decisions and alternatives
+      ## Failure modes and compatibility
+      ## Migration and rollback
+      ## Verification notes
+    markers:
+      - id: verification-coverage
+        section: Verification notes
+        role: requirement-coverage
+      - id: rejected-alternative
+        section: Decisions and alternatives
+        role: decision-alternative
+        pattern: ['**Rejected alternative:', '**被否决的替代方案：']
+  - id: check-report
+    generates: check-report.md
+    description: Narrate the pre-implementation review across Proposal, delta Specs, and Design
+    instruction: Explain completeness, consistency, testability, and feasibility. Stage exit is decided by the findings ledger, not by this prose.
+    outline: |
+      ## Completeness
+      ## Consistency
+      ## Testability
+      ## Feasibility and risk
+      ## Rework
+  - id: check-findings
+    generates: evidence/check-findings.yaml
+    description: Machine-decidable findings ledger the Check Gate can actually decide
+    instruction: One entry per finding with id, severity (blocker|warning|suggestion), summary, refs to the Artifacts it concerns, and for a blocker a status, a reworkTo Stage while open, and a resolvedBy identity once resolved. Record an explicit empty list when the review found nothing. The Stage cannot exit while any blocker is unresolved.
+    outline: |
+      findings:
+        - id: <finding-id>
+          severity: <blocker|warning|suggestion>
+          summary: <what is wrong>
+          refs: [<artifact or spec path>]
+          status: <open|resolved>
+          reworkTo: <stage id, required while a blocker is open>
+          resolvedBy: <name or email, required once status is resolved for a blocker; must match a known approver or Git author>
+  - id: constitution-check
+    generates: evidence/constitution-check.yaml
+    description: Answer every Constitution principle for this Change
+    instruction: One entry per `## ` principle in xforge/constitution.md, each with status compliant|violation|not-applicable. Every entry must cite at least one machine-locatable reference in `references` — a Requirement id from this Change's delta Specs, a file path that exists, or `gate:<name>` for a Gate that passed. A violation additionally needs a justification and a named approvedBy; not-applicable needs a justification. A general claim of compliance does not satisfy the Gate, and neither does an approval receipt on its own — a receipt records that someone approved a transition, not why this Change satisfies the principle.
+    outline: |
+      principles:
+        - principle: <exact `## ` heading from constitution.md>
+          status: <compliant|violation|not-applicable>
+          references: [<Requirement id | existing path | gate:<name>>]
+          justification: <required for violation and not-applicable>
+          approvedBy: <named person, required for violation>
+  - id: assurance
+    generates: assurance.md
+    description: Record verification against requirements, design, tests, and constraints
+    instruction: Summarize completeness, correctness, coherence, and Gates with traceable evidence.
+    outline: |
+      ## Completeness
+      ## Correctness
+      ## Coherence
+      ## Gates and evidence
+      ## Findings
+    markers:
+      - id: verification-coverage
+        section: Completeness
+        role: requirement-coverage
+governance:
+  approvalPolicies:
+    - id: planning-solid
+      minApprovers: 1
+      roles: [owner, maintainer]
+      separationOfDuties: false
+      providers: [local, enterprise-approvals]
+    - id: closing-solid
+      minApprovers: 1
+      roles: [owner, maintainer]
+      separationOfDuties: false
+      providers: [local, enterprise-approvals]
+  audit:
+    requiredEventTypes: [gate.after, stage.entered, approval.decided]
+    runtimeCoverage: optional
+    remoteDelivery: optional
+stages:
+  - id: propose
+    skill: xforge-propose
+    authority: planning-write
+    requires: []
+    produces: [proposal, delta-specs]
+    gates: [structure]
+
+  - id: design
+    skill: xforge-design
+    authority: planning-write
+    requires: [propose]
+    produces: [design]
+    reworkTo: [propose]
+    exit:
+      approvals: [planning-solid]
+  - id: check
+    skill: xforge-check
+    authority: assurance-write
+    requires: [design]
+    produces: [check-report, check-findings, constitution-check]
+    gates: [structure, check-findings, constitution-check]
+    reworkTo: [propose, design]
+  - id: apply
+    skill: xforge-apply
+    authority: implementation-write
+    requires: [check]
+    produces: []
+    reworkTo: [propose, design, check]
+  - id: verify
+    skill: xforge-verify
+    authority: assurance-write
+    requires: [apply]
+    produces: [assurance]
+    gates: [structure, unit-tests]
+    reworkTo: [apply]
+    exit:
+      conditions:
+        verificationReceipt: passed
+terminal:
+  archive:
+    handler: xforge-verify
+    authority: archive-write
+    requires: [verify]
+    syncSpecs: true
+    approvals: [closing-solid]
+    auditPolicy:
+      requiredEventTypes: [gate.after, stage.entered, approval.decided]
+      runtimeCoverage: optional
+      remoteDelivery: optional

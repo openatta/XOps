@@ -1,0 +1,167 @@
+apiVersion: xforge.dev/v1alpha2
+generatedProtocol: "2"
+kind: Lock
+paths:
+  changes: xforge/changes
+  specs: xforge/specs
+protocol: "2"
+resources:
+  - digest: 91410bf7c45455cd2d51857850841eddfba3dc9107c1d754abab7bbe4e53c98b
+    id: integrator
+    kind: agent
+    license: project
+    version: 2
+  - digest: 400d843adc2a5dd73057db079b09207f4e3664d19c506e584d8cd46c232a7d03
+    id: reviewer
+    kind: agent
+    license: project
+    version: 3
+  - digest: 8a89a541d97d63bbb5beb723552ffdc4d875ed889ff6b0ac4896a09c08dc4ca6
+    id: worker
+    kind: agent
+    license: project
+    version: 2
+  - digest: 5c8002edf491245450f870a3a26ebca9af4612aa73a5b839806b7c7de9ac4caa
+    id: check-findings
+    kind: gate
+    license: project
+    version: 1
+  - digest: 446780229cd7fb5c0f5655fba443dc07b36450ed95f2a7da55528cfd2c6bc959
+    id: constitution-check
+    kind: gate
+    license: project
+    version: 1
+  - digest: 973d9644bda7c8ac94641c2eaff2ac01cf0718bd978fdf0709214185828f0426
+    id: security-scan
+    kind: gate
+    license: project
+    version: 3
+  - digest: 39a4adc3ccd641cbd900d17d3a4abaac397f30730de1d58bee86f0bf2d66e853
+    id: structure
+    kind: gate
+    license: project
+    version: 1
+  - digest: 6360fb042019aaad2e8f0b14106297d10004a9a19e14350e464a18c464b522f6
+    id: unit-tests
+    kind: gate
+    license: project
+    version: 3
+  - digest: 990f970191c3e163e4b76e4cb89aaad7e26853bb735eb3d4b64d24dee0c89dcf
+    id: protected-files
+    kind: permission-policy
+    license: project
+    version: 1
+  - digest: e17df0fe5384399d0eae56515ff66a8e970134315b2c603a94db6f2c6a6145ef
+    id: protected-manifest
+    kind: permission-policy
+    license: project
+    version: 1
+  - digest: 4f54fcbec7811d94a63165a5fef1e1c7b6c9c4d4025147c19618b923151c18d7
+    id: design-decisions-need-a-human
+    kind: rule
+    license: project
+    version: 2
+  - digest: 3d97fd0af60127bbc46afc204dff225fa41b9d1475749b8e66772c69762f7b28
+    id: design-within-the-declared-architecture
+    kind: rule
+    license: project
+    version: 1
+  - digest: c0aba0ed91ef29e744f19ee9f93a374d4b73dd2d7f6518368ed1ce1836b8baba
+    id: governance-assets-are-integrator-only
+    kind: rule
+    license: project
+    version: 1
+  - digest: 31a19248041aedef5b83184209ecee32b5121fce98b9420b12848048ecfc3dc9
+    id: observable-requirements-are-tested
+    kind: rule
+    license: project
+    version: 1
+  - digest: 6377d51cfbe4187fd79d86837a3da974a0219dab8a04647f22148d2609436053
+    id: prefer-small-explicit-contracts
+    kind: rule
+    license: project
+    version: 1
+  - digest: ec29d19d015fe53c97000a6a2a673bc1fae0cd0236a7b2c200062cc8efb419e4
+    id: project-context
+    kind: script
+    license: project
+    version: 1
+  - digest: fa745da238ea47bf2ec1f46511324c6d9e8bfb9774370f914f38e683b9c87562
+    id: xforge-apply
+    kind: skill
+    license: project
+    version: "1"
+  - digest: b4d261de222561e6ec28275860422cd3e5739aeed33b1c28f392c42cff147e06
+    id: xforge-architect
+    kind: skill
+    license: project
+    version: "1"
+  - digest: 58d092b58d15cca919747c3044f68f014f1e6415ea1785b1f1b8c2e6789ea1d8
+    id: xforge-check
+    kind: skill
+    license: project
+    version: "1"
+  - digest: 7f4b8ce1d431ca374c446706e1116623f722afd5af621a5dd78ed964c16bdc9e
+    id: xforge-clarify
+    kind: skill
+    license: project
+    version: "1"
+  - digest: f70b9d2a1176ba9a78eec67f02a0420141d1eb8dbd8b6dc7040bd5d8680bddcb
+    id: xforge-design
+    kind: skill
+    license: project
+    version: "1"
+  - digest: 4108f2efe9dc70bfe44fc58b2b0040b0d044ff6935a4362d9638dade6fb08c81
+    id: xforge-kanban
+    kind: skill
+    license: project
+    version: "1"
+  - digest: 9d05d355272cfb50d3d614a55f18ec98fb0829116d31cfa3e2a6c726d8c765b3
+    id: xforge-propose
+    kind: skill
+    license: project
+    version: "1"
+  - digest: 68dc9c069b1a59aeb2111df96d44adc06c6f1132a40b5f2209408be56b253f80
+    id: xforge-revise
+    kind: skill
+    license: project
+    version: "1"
+  - digest: 18a2b256766c500129faf684c4205cd244fecbba119638b586d0d2f06b6f4f7c
+    id: xforge-scaffold
+    kind: skill
+    license: project
+    version: "1"
+  - digest: a1508827dd485db47b5344e2cb1934d895a2511beeaacb8d491f6fffed1dd7d9
+    id: xforge-status
+    kind: skill
+    license: project
+    version: "1"
+  - digest: 0a4898fa40834ef75bd43d680ff1e9b5d3781a4605ff7391204fd9922d6969ef
+    id: xforge-upgrade-scaffold
+    kind: skill
+    license: project
+    version: "1"
+  - digest: a4a83bf15cfb8eea0765a6bfc55da9b8ba3309980a5e539a59f48838ca3193d4
+    id: xforge-verify
+    kind: skill
+    license: project
+    version: "1"
+scaffold:
+  language: zh-CN
+  source:
+    package: "@xforge/cli"
+    type: npm
+    version: 0.7.16
+  version: 0.7.16
+targets:
+  - codex
+  - claude
+  - cursor
+  - opencode
+  - github-copilot
+xforge:
+  integrity: sha256:b1343220589d7258710eebb878d21e4c1bf26f0f8a97bc1808480829899d5f19
+  package: "@xforge/cli"
+  protocol: "2"
+  source: npm
+  version: 0.7.16

@@ -1,0 +1,17 @@
+apiVersion: xforge.dev/v1alpha2
+kind: Rule
+metadata:
+  name: prefer-small-explicit-contracts
+  version: 1
+spec:
+  severity: should
+  instruction: >-
+    Prefer small, testable modules with explicit contracts over broad shared helpers. Judgement
+    guidance only; XForge does not claim to enforce it.
+  scope:
+    paths:
+      - src/**
+  enforcement:
+    # instructed only: deliberately uncovered, and `xforge state` reports it as such.
+    gateRefs: []
+    policyRefs: []

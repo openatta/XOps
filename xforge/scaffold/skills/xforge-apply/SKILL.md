@@ -1,0 +1,51 @@
+---
+name: xforge-apply
+description: Decompose and implement the smallest delivery units for an Apply-ready Change, using a work-package DAG and parallel sub-Agents when safe; use when the user explicitly asks to start, continue, or rework implementation and State allows implementation-write.
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash, Task
+---
+
+# Invariants
+
+- Run `xforge state --change <id>` at the start and after every material change. Consume only the current-revision ready Apply Action; never guess Flow order, paths, Gates, or parallel strategy.
+- Read all Action inputs, Constitution, relevant Rules/Specs, optional Design/Check report, and existing work packages from disk. Chat memory is not a source of truth.
+- Main Agent is always Coordinator and Workers never delegate. XForge does not start model processes; the target runtime activates native sub-Agents.
+- Apply plans are just-in-time execution assets, not a new Stage or second specification source of truth.
+- Obey `currentStage=apply`, current `stateRevision`, `policySnapshotDigest`, and typed `nextActions`; never edit Stage, Transition/Approval receipts, or core Audit directly.
+
+# Authority
+
+- Main Agent may modify in-scope product code and tests, Action-authorized compact task records, `work-packages.yaml`, and accepted delivery records.
+- A Worker writes only files matching its assigned `write_paths`; it cannot write the plan, Evidence, Constitution, canonical Specs, Archive, or Integrator-only shared contracts, migrations, generated output, or lock files.
+- If reality invalidates Proposal/Specs/Design, return to the Action's rework Stage instead of rewriting governance facts silently.
+- All writes remain subject to effective PermissionPolicy. Agents cannot approve for humans, and Reviewer assurance is not Approval.
+
+# Execution
+
+1. Pin State revision and Git base. Extract constraints, dependency order, minimum delivery units, verification commands, and observable completion criteria from governing Artifacts.
+2. Choose direct serial work or a persistent plan: use a short Main-Agent plan for one small task; create `work-packages.yaml` for complex, long-running, resumable, or multi-Agent work. The Flow does not decide this — judge it from the dependency graph the work actually has.
+3. Each package contains only `id`, optional `role`, `goal`, `depends_on`, `inputs`, `write_paths`, `skills`, `verify`, and `done_when`. Reserve the assembly surface — shared contracts, module lists, DI roots, migrations, generated or lock files — under the plan's top-level `integrator_paths`, which no worker package may declare. Reserving any obliges the plan to carry exactly one `role: integrator` package that depends on the packages it assembles and whose `write_paths` fall inside `integrator_paths`: assembly the DAG cannot see is assembly it will report as done, and every worker package can succeed with nothing joined together. Write each `verify` entry as an argv array — `verify: [["npm", "test"], ["npx", "eslint", "src"]]` — because XForge spawns `argv[0]` with the rest as literal arguments and never a shell: no piping, redirection, chaining, or substitution. A single string is deprecated and is rejected outright if it holds a shell metacharacter; put anything needing a shell in a script under `write_paths` and call it. Give every path one writer and narrow broad parent globs. Put `change_id`, `execution_id`, commits, branch, worktree, and delivery mode in dispatch data, not the static plan.
+4. Refresh State after writing the plan. Before creating worktrees, let CLI validate IDs/DAG, inputs, skills, Change scope, protected paths, dependency commits, verify commands, and ready set. Run `xforge work-package dispatch --change <id> --package <package>` for each ready package and pass its revision/policy/audit/execution bindings to the Worker.
+5. Run Workers in parallel only when at least two dependencies are satisfied, `write_paths` do not overlap, shared databases/ports/caches/accounts/generated outputs are isolated, and both Adapter Agent projection and runtime sub-Agent execution are native. Module count is not a conflict test. `agents: native` and `subagent: native` report that XForge wrote the Agent definitions and that this target has a sub-agent mechanism — not that your runtime offers `worker`/`integrator`/`reviewer` as selectable types. Check the runtime's own list; if they are absent, carry the projected contract into the prompt verbatim and say in the report that the boundary was prompt-carried. Either way the `write_paths` boundary is decided afterwards by the CLI against the real diff, so a Worker cannot escape it by being unisolated.
+6. Pin each ready package to the same trusted base, create an isolated branch/worktree, and assign one package per Worker. The Worker reads all inputs/skills, makes the minimum in-scope implementation and tests, runs every `verify` argv exactly as declared, commits in native delivery mode, and returns the fixed delivery contract.
+7. Run `xforge work-package draft --change <id> --package <package>` to obtain the delivery record's machine-known half — execution id, commits, `changed_paths`, and each declared `verify` command with the exit code the CLI observed running it. Do not retype those; you supply only `status`, `issues`, and the `evidence` list under each `done_when_evidence` criterion. Main Agent then checks dispatch binding, commit ancestry, actual `base...head` diff, write boundary, command exits, and semantic evidence. A delivery's recorded validation commands must match the declared `verify` entries exactly, in order. Every successful delivery must return `done_when_evidence`, mapping each exact `done_when` criterion once to non-empty evidence, plus unchanged revision/policy/audit bindings. Only then record `<change>/evidence/agents/<package>/<execution>.yaml` and refresh State.
+8. Use at most one Integrator for multiple commits, shared contracts, migrations, generated/lock files, or centralized integration verification. Dispatch and deliver its `role: integrator` package exactly like a worker's — the assembly earns a delivery, a real diff, and passing `verify` on the same terms. After storing integration evidence, run `xforge work-package acknowledge ... --as integrator --evidence <path>`. For high-risk/cross-system output use an independent Reviewer; the Reviewer is read-only, so transcribe its returned result verbatim into `<change>/evidence/agents/<package>/review-<execution>.yaml` — never a paraphrase or a summary — and only then run the same command with `--as reviewer --evidence <that path>`. Replan undeclared overlaps instead of hiding them during integration.
+9. If Agent projection or runtime sub-Agents are degraded/unsupported, Main Agent executes packages serially or uses the declared degraded patch flow. Report the missing parallel/worktree isolation accurately.
+10. Run proportionate tests, lint, and build after each coherent unit. When implementation is complete, run `xforge check --change <id>`, request `xforge transition --change <id> --to verify`, and hand off to `xforge-verify`.
+
+# Evidence
+
+- Read `xforge/architecture.md` when it exists and keep the implementation inside the decisions it records. When implementation reveals that a decision must change, that is a rework signal, not a note to leave behind: return to the Action's rework Stage so Design can propose it. Do not write `evidence/conditions/architectureDeltas.yaml` yourself — that entry names a `decidedBy`, and an Agent filling in a human's name records an authorisation nobody gave. When the file does not exist, say so once and proceed: it is a project that has not written its architecture down, not a project in violation.
+- Success requires a real Git diff, zero exits for every `verify`, an exact non-empty evidence mapping for every `done_when`, and CLI revalidation.
+- Each `done_when_evidence` entry must **begin** with either an exact path from that delivery's `changed_paths` or an exact `verify` command it ran; only that prefix is matched. An explanation may follow after ` — ` or ` -- `, and `path:`/`command:` prefixes are accepted. So `src/store/mod.rs — defines CredentialRepo` matches and `src/store/mod.rs:166 — …` does not, and neither does a test function name or a sentence of prose, however accurate. Cite different evidence for different criteria: one command standing for every criterion in a delivery cannot be telling them apart, and the CLI says so.
+- Worker prose, checkboxes, and self-reported exits are not Gate Evidence. Report package states, changed paths, commands, integration/review results, and unresolved risk.
+
+# Stop and rework
+
+- Stop on stale prerequisites/revision, invalid DAG, missing inputs/skills, path conflict/escape, dependency drift, non-isolated shared resources, failed tests, secrets, unauthorized migration, or material ambiguity.
+- `tree:unattributed-paths` and `XFORGE_WORK_PACKAGE_TREE_UNATTRIBUTED` are not a package's problem, whatever else is blocked at the same time: the tree holds committed work no `write_paths` and no `integrator_paths` entry claims. Do not audit the deliveries — they can each be faultless while this blocks. Fix the plan's declarations, then re-record the deliveries the change affects.
+- Return implementation failure to `apply:rework`; if governing assumptions fail, follow `reworkTo` through `xforge-revise` or the owning Stage Skill. Never archive.
+
+# Judgment calls
+
+- "`write_paths` don't overlap" is necessary but not sufficient for safe parallel dispatch — two work packages can have fully disjoint `write_paths` and still race on a shared port, database, cache key, or a generated/lock file that no `write_paths` entry names. Verify actual resource isolation before dispatch, not glob disjointness alone; matching module or path counts is not evidence of independence.
+- Work-package granularity is itself a judgment call with failure modes on both sides: splitting too fine adds coordination and Integrator overhead and multiplies the chance of an undeclared shared write; splitting too coarse hides a real internal dependency inside one package and forecloses parallelism that was actually available. Size packages to the dependency graph the code actually has, not to an even division of the task list.

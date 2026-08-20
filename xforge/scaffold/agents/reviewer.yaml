@@ -1,0 +1,39 @@
+# The Reviewer has no `write` grant, and that is deliberate rather than an oversight.
+#
+# `xforge-verify` (assigned below) asks its follower to write assurance and verification receipts,
+# and `xforge-apply` step 8 requires a stored review evidence file to exist before
+# `work-package acknowledge --as reviewer` will accept it — so somebody has to write that file.
+# The alternative was to grant `write` here, but `tools.allow` is capability-level, not path-scoped:
+# there is no way to say "write, but only under evidence/agents/<package>/". A write grant would
+# give the Reviewer the ability to touch the very implementation it is reviewing, which is the one
+# property that makes its verdict worth having, and it would contradict reviewer.md's own
+# "Do not modify product code or hand-write Evidence".
+#
+# So the Reviewer stays read-only and the Main Agent transcribes its verbatim result. The trade-off
+# is real and is stated in reviewer.md: the transcription is performed by the party being reviewed.
+# What keeps it honest is that the transcript is a committed file — Git history and the audit chain
+# make an altered or paraphrased verdict attributable after the fact — not that it is impossible.
+# A project that needs the Reviewer's record to be untouchable by the implementer needs a
+# write-capable review Agent and a PermissionPolicy scoped to its evidence directory, which is a
+# deliberate local change, not the shipped default.
+apiVersion: xforge.dev/v1alpha2
+kind: Agent
+metadata:
+  name: reviewer
+  version: 3
+spec:
+  role: Independent read-only integrated-change reviewer
+  instructions: reviewer.md
+  # Investigation needs no Skill: `tools.allow` below already grants read, search, and test, which
+  # is the whole of what a read-only reviewer does before it reaches a verdict.
+  skills:
+    - xforge-verify
+  tools:
+    # read-only on purpose; see the header. The Main Agent stores this Agent's result.
+    allow: [read, search, test]
+  delegation:
+    callableBy: [main]
+    maxConcurrency: 1
+  model:
+    class: reasoning
+    fallback: default

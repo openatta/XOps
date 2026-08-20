@@ -3,45 +3,45 @@
   "kind": "AuditIndex",
   "version": 3,
   "change": "repo-skeleton",
-  "generatedAt": "2026-08-20T11:45:48.761Z",
+  "generatedAt": "2026-08-20T11:55:39.923Z",
   "chain": {
     "anchor": null,
-    "head": "96946947ccd55186ecd8660a7d12581b12250b06a4c2dba7db1ad5d80e94cb48",
-    "eventCount": 24,
+    "head": "e23663e25431722d433aacc4957aa70f1468a3bcbdca56fa08bd822380cd181b",
+    "eventCount": 40,
     "valid": true,
     "prunedCount": 0,
     "prunedThrough": null
   },
   "delivery": {
     "remoteConfigured": true,
-    "pending": 12,
+    "pending": 20,
     "delivered": 0
   },
   "eventTypes": {
     "gate.before": {
-      "count": 3,
-      "lastTimestamp": "2026-08-20T11:09:20.851Z",
-      "lastHash": "c8340c133f24f4453f457f7eb43f9af7143cb0bc0526b9a8c8f8ddcd46a21368"
+      "count": 5,
+      "lastTimestamp": "2026-08-20T11:50:31.612Z",
+      "lastHash": "329c807ba20dff2798eda035a40c619d6c117a2326178ef0a83e417d08b34f5d"
     },
     "audit.delivery": {
-      "count": 12,
-      "lastTimestamp": "2026-08-20T11:45:48.029Z",
-      "lastHash": "96946947ccd55186ecd8660a7d12581b12250b06a4c2dba7db1ad5d80e94cb48"
+      "count": 20,
+      "lastTimestamp": "2026-08-20T11:55:39.917Z",
+      "lastHash": "e23663e25431722d433aacc4957aa70f1468a3bcbdca56fa08bd822380cd181b"
     },
     "gate.after": {
-      "count": 3,
-      "lastTimestamp": "2026-08-20T11:09:20.871Z",
-      "lastHash": "d55e46b42a8b2ad24962f414649ae502233273343a8618bd7701d1f3e18b28d8"
+      "count": 5,
+      "lastTimestamp": "2026-08-20T11:50:36.369Z",
+      "lastHash": "f7b4ec5dc2549dbc69238b09e516efa0211cc2c8f61fee1ab14bf58c3a45e925"
     },
     "stage.entering": {
-      "count": 3,
-      "lastTimestamp": "2026-08-20T11:45:41.774Z",
-      "lastHash": "49b46dfe56ed9985f24239f171f574f9fa910ae09f61aec9ce33fa5136b9a5dc"
+      "count": 5,
+      "lastTimestamp": "2026-08-20T11:55:39.836Z",
+      "lastHash": "79ec803f2071b3f7c411ddf54bcc07b94832b6c3e9121e39c976fc567661edc5"
     },
     "stage.entered": {
-      "count": 3,
-      "lastTimestamp": "2026-08-20T11:45:47.300Z",
-      "lastHash": "f6214a91305f99bb1d5b97c84e408c5a9a3055cf36585fcd78459bb40120bf09"
+      "count": 5,
+      "lastTimestamp": "2026-08-20T11:55:39.911Z",
+      "lastHash": "9423c60d53f74d03ac1230627a179b7acc2e340eff37f31c4ef8d18894301642"
     }
   },
   "coverageGaps": [],
@@ -310,11 +310,187 @@
       "deliveryState": "spooled",
       "inputDigest": "f6214a91305f99bb1d5b97c84e408c5a9a3055cf36585fcd78459bb40120bf09",
       "hash": "96946947ccd55186ecd8660a7d12581b12250b06a4c2dba7db1ad5d80e94cb48"
+    },
+    {
+      "eventId": "87cd5d3c-9d93-4171-921f-2e78603293e3",
+      "eventType": "stage.entering",
+      "timestamp": "2026-08-20T11:50:30.834Z",
+      "plane": "workflow",
+      "stateRevision": "a403474dcbd4345603cdc00aba53bebfe783a05edff85c441096c3a3ba287822",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "hash": "546eadb30a4faa2c8fe9ea4b9f60bc03063e062def89791c108ccb305d95291e"
+    },
+    {
+      "eventId": "e70ef048-1fd4-4864-8cbb-44c2e4fb2f8e",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T11:50:30.842Z",
+      "plane": "workflow",
+      "stateRevision": "a403474dcbd4345603cdc00aba53bebfe783a05edff85c441096c3a3ba287822",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "546eadb30a4faa2c8fe9ea4b9f60bc03063e062def89791c108ccb305d95291e",
+      "hash": "f2d1e2f05067d191c8c9a0e7d262caabd828779e0b398649abc4b8b2e71ec31d"
+    },
+    {
+      "eventId": "5219e764-23aa-4a35-afb4-6da2646e0b1e",
+      "eventType": "stage.entered",
+      "timestamp": "2026-08-20T11:50:30.905Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "8e750e35296e4c66b3ef39c8e9c14496e60e0b9919cca154490dfec44014e7a0",
+      "hash": "4117460ec55f1dd0e339cd867c217460db2490e3992cf5934b9013295615cf4f"
+    },
+    {
+      "eventId": "c0597f78-abe2-4cfd-93f7-c448be069992",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T11:50:30.911Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "4117460ec55f1dd0e339cd867c217460db2490e3992cf5934b9013295615cf4f",
+      "hash": "45b7f669b36842e76e0d546451ca68a655e66fa762bd43292669f6a71195d235"
+    },
+    {
+      "eventId": "d7f3ffb0-77f2-4990-89e5-6a1024815e23",
+      "eventType": "gate.before",
+      "timestamp": "2026-08-20T11:50:31.490Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "6e14df7ffe5175fd2c04e730cff561a6c6abeaff4811b16db7e22d87c702a827",
+      "hash": "59f7c55e3a8a554a6af968b4bea3dbfb039837102d87c45f4898d39caf9c73d9"
+    },
+    {
+      "eventId": "a7db6bda-6d8e-48b5-87cc-2c486d7b0f71",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T11:50:31.501Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "59f7c55e3a8a554a6af968b4bea3dbfb039837102d87c45f4898d39caf9c73d9",
+      "hash": "ffbe0f7c757f86d1c9625ca68e4fcfe3cca29c7966541217526fa4a8e44936dc"
+    },
+    {
+      "eventId": "8261ee28-3df6-48cd-91e7-cdaa20e73861",
+      "eventType": "gate.after",
+      "timestamp": "2026-08-20T11:50:31.516Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "6e14df7ffe5175fd2c04e730cff561a6c6abeaff4811b16db7e22d87c702a827",
+      "hash": "691efca5df1e8ab80489963af23749831de12f9daecd20062a06bf279f7edcb0"
+    },
+    {
+      "eventId": "dc7e817f-f77e-439c-9590-5a24e7004c27",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T11:50:31.522Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "691efca5df1e8ab80489963af23749831de12f9daecd20062a06bf279f7edcb0",
+      "hash": "ddd8a4e0854a5d9807d7a8ef3510cc11efa062ed8895e7b2cc9f62d20da244ae"
+    },
+    {
+      "eventId": "a2337a2b-e662-43fc-a09c-7061d1dd740e",
+      "eventType": "gate.before",
+      "timestamp": "2026-08-20T11:50:31.612Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "b024bc909bbdd477fa6231e3fff357c4ef5a3d40e0777d60f273bfe1fa6f3ca4",
+      "hash": "329c807ba20dff2798eda035a40c619d6c117a2326178ef0a83e417d08b34f5d"
+    },
+    {
+      "eventId": "19be98a7-eef0-4c98-8c53-33a90226c7a8",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T11:50:31.621Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "329c807ba20dff2798eda035a40c619d6c117a2326178ef0a83e417d08b34f5d",
+      "hash": "b1ca7e37fc80004a64d74603fffcb96fe336c50ddb5a4297661186ba544f490f"
+    },
+    {
+      "eventId": "afdffb13-ddf6-4705-b702-70ad0c7cb113",
+      "eventType": "gate.after",
+      "timestamp": "2026-08-20T11:50:36.369Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "b024bc909bbdd477fa6231e3fff357c4ef5a3d40e0777d60f273bfe1fa6f3ca4",
+      "hash": "f7b4ec5dc2549dbc69238b09e516efa0211cc2c8f61fee1ab14bf58c3a45e925"
+    },
+    {
+      "eventId": "0e5a0040-3c63-4de1-b15a-dd75b7137f63",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T11:50:36.377Z",
+      "plane": "workflow",
+      "stateRevision": "053d0c9d72abc6626b03aad2a79219f48d13fbfabf5f7ec7799ea944200a898b",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "f7b4ec5dc2549dbc69238b09e516efa0211cc2c8f61fee1ab14bf58c3a45e925",
+      "hash": "4f693423ef170bf8a5ca3c1034c2d12869b89661b55eaa7a943be24eb4e4809a"
+    },
+    {
+      "eventId": "cfd96a3c-a5fa-4de3-a8c1-594cc2452473",
+      "eventType": "stage.entering",
+      "timestamp": "2026-08-20T11:55:39.836Z",
+      "plane": "workflow",
+      "stateRevision": "b9a08a2c3338553d026e9448723b0583e0e6713e46c80b4ad49e95e46e4527c4",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "hash": "79ec803f2071b3f7c411ddf54bcc07b94832b6c3e9121e39c976fc567661edc5"
+    },
+    {
+      "eventId": "eff1165a-cb8e-464a-a052-f8284b181226",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T11:55:39.846Z",
+      "plane": "workflow",
+      "stateRevision": "b9a08a2c3338553d026e9448723b0583e0e6713e46c80b4ad49e95e46e4527c4",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "79ec803f2071b3f7c411ddf54bcc07b94832b6c3e9121e39c976fc567661edc5",
+      "hash": "bbdc95c34e0a838cf2ba46404ca7d6601ecd64e5c567247381a50a13c2b3163a"
+    },
+    {
+      "eventId": "aca2a28c-6629-4a24-9e4f-120079eae720",
+      "eventType": "stage.entered",
+      "timestamp": "2026-08-20T11:55:39.911Z",
+      "plane": "workflow",
+      "stateRevision": "7838ad46ab8249d5d973c0f8d3b0710093311a018d9a25f7c4eb3a35e0129254",
+      "outcome": "succeeded",
+      "deliveryState": "pending",
+      "inputDigest": "ca6b958ea655f999968e85da7fd451b2ca660dad203091c73d43c96d2469e043",
+      "hash": "9423c60d53f74d03ac1230627a179b7acc2e340eff37f31c4ef8d18894301642"
+    },
+    {
+      "eventId": "5f9fc933-75d2-4d42-aaad-dc98894b63dd",
+      "eventType": "audit.delivery",
+      "timestamp": "2026-08-20T11:55:39.917Z",
+      "plane": "workflow",
+      "stateRevision": "7838ad46ab8249d5d973c0f8d3b0710093311a018d9a25f7c4eb3a35e0129254",
+      "outcome": "spooled",
+      "deliveryState": "spooled",
+      "inputDigest": "9423c60d53f74d03ac1230627a179b7acc2e340eff37f31c4ef8d18894301642",
+      "hash": "e23663e25431722d433aacc4957aa70f1468a3bcbdca56fa08bd822380cd181b"
     }
   ],
   "eventsTruncated": false,
   "governanceComplete": true,
-  "chainHead": "96946947ccd55186ecd8660a7d12581b12250b06a4c2dba7db1ad5d80e94cb48",
+  "chainHead": "e23663e25431722d433aacc4957aa70f1468a3bcbdca56fa08bd822380cd181b",
   "chainValid": true,
-  "digest": "2efe105bd366295652f7d60ebebb006e73cc82c2992fd1d0b9e1f84673fa546b"
+  "digest": "00e6520a4106570e972abee8c534c4cc00ea28474540994f3fe578a5c68561bf"
 }

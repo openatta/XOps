@@ -10,8 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 20 是 package.json engines 声明的下限，24 是当前主流版本。
-        node: [20, 24]
+        # 22 是 package.json engines 声明的下限（pnpm 11 要求 Node >=22.13），
+        # 24 是当前主流版本。下限必须真的被跑到，否则声明只是一句没人验证的话。
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
 

@@ -122,6 +122,21 @@ describe("SKEL-003 / 005 / 006 根配置约束", () => {
     expect(floor).toBeGreaterThanOrEqual(20);
   });
 
+  // 这条测试来自一次真实的 CI 失败：engines 曾声明 >=20，而 packageManager
+  // 钉的 pnpm 要求 Node >=22.13，CI 照着 20 跑于是必然失败。声明的下限如果
+  // 没有被 CI 真正跑到，它就只是一句没人验证的话。
+  test("CI 矩阵的最低 Node 版本等于 engines 声明的下限", () => {
+    const workflow = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+    const matrix = /node:\s*\[([^\]]+)\]/.exec(workflow)?.[1];
+    expect(matrix).toBeDefined();
+
+    const versions = (matrix ?? "").split(",").map((v) => Number(v.trim()));
+    expect(versions.length).toBeGreaterThan(0);
+
+    const declaredFloor = Number(/(\d+)/.exec(pkg.engines?.node ?? "")?.[1]);
+    expect(Math.min(...versions)).toBe(declaredFloor);
+  });
+
   test("骨架不引入任何产品运行时依赖", () => {
     expect(pkg.dependencies ?? {}).toEqual({});
   });

@@ -1,0 +1,25 @@
+{
+  "apiVersion": "xforge.dev/v1alpha2",
+  "kind": "TransitionReceipt",
+  "receiptId": "d5538eae-130d-46d2-80ed-98d07fea03c4",
+  "sequence": 5,
+  "change": "repo-skeleton",
+  "flow": "quick",
+  "from": "verify",
+  "to": "apply",
+  "contentRevision": "aef946ec622a5884896ff3ade2aee9a3968a9117e793568df626af80f3aed351",
+  "stateRevisionBefore": "b9a08a2c3338553d026e9448723b0583e0e6713e46c80b4ad49e95e46e4527c4",
+  "policySnapshotDigest": "690a8284442ebbe707fddd7a1d41b07e64caab960fc15f1a36436ef554211b5a",
+  "gitHead": "0b91fd71a7735e811b05f23f7f117c835dcb0804",
+  "previousReceiptDigest": "41d312b4607cf408df5f31a48be7eaa5efa829cc4354d7fc3f09bee1bdfd910e",
+  "transitionedAt": "2026-08-20T11:55:39.858Z",
+  "actor": {
+    "id": "xbitshans",
+    "provider": "local-os",
+    "type": "human"
+  },
+  "approvals": [],
+  "gates": [],
+  "auditHead": "bbdc95c34e0a838cf2ba46404ca7d6601ecd64e5c567247381a50a13c2b3163a",
+  "digest": "1207e4c9eb510c55dfe92e82e91e532e96ab6d8ea25260fe950192b4fe2502af"
+}

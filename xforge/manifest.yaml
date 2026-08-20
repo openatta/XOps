@@ -107,3 +107,11 @@ audit:
     hmacSecretEnv: XFORGE_AUDIT_HMAC_SECRET
     timeoutSeconds: 5
     requiredFor: []
+verification:
+  unit-tests:
+    - command:
+        - pnpm
+        - run
+        - test
+      declaredAt: 2026-08-20T11:45:30.701Z
+      declaredBy: xbitshans

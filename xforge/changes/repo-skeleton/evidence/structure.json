@@ -4,13 +4,13 @@
   "gate": "structure",
   "change": "repo-skeleton",
   "flow": "quick",
-  "stage": "propose",
-  "stateRevision": "27ed8102bcaf557c15fc792c2dfa8ae9076b65b49c9a20e08a2cd1f6e200ee90",
+  "stage": "verify",
+  "stateRevision": "c5de806cee7d4e69790f97c038263311328c34aa963403d3154b224054fc0cf9",
   "contentRevision": "a1a405d66c7d9b184c45f7e30377177c6d21341c3f1759438414836b7eb981ec",
   "policySnapshotDigest": "690a8284442ebbe707fddd7a1d41b07e64caab960fc15f1a36436ef554211b5a",
-  "gitBase": "bf979861b913c2a3d08d591e1ddcf164eeea3e7e",
-  "gitHead": "155be6af84b473bd737323fa827542e460d26439",
-  "inputDigest": "5bfc2032ba25a0b716241073d16c6cc3a22e688085e7f7a8115e0b4f79a8031c",
+  "gitBase": "155be6af84b473bd737323fa827542e460d26439",
+  "gitHead": "c263e88fe1f5a46c0cbd01a9df14dde141c13ef2",
+  "inputDigest": "64ba0cd5b819adbe035595ea54d2d5aab290a30e7068f02f6a84574103edc08a",
   "runner": {
     "name": "@xforge/cli",
     "version": "0.7.16",
@@ -26,9 +26,9 @@
   "outputTruncated": false,
   "stdout": "Structural validation passed.",
   "stderr": "",
-  "startedAt": "2026-08-20T10:26:40.868Z",
-  "finishedAt": "2026-08-20T10:26:40.868Z",
+  "startedAt": "2026-08-20T11:09:20.742Z",
+  "finishedAt": "2026-08-20T11:09:20.742Z",
   "durationMs": 0,
   "status": "passed",
-  "digest": "00e590113f1e6ce298b92f1d97a1b584ad66c97c9944919e512d73ec2541f22c"
+  "digest": "f070b20db2ab1ab4251bb464c77535bff4337d2751b7906512c19e6b250fb9db"
 }

@@ -363,3 +363,53 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
   实例标识作为参数，**平台代填**。
 - 参数里自己带 `_instance` 会被拒。
 - 它在 RP-15 而不是 RP-14，**因为它是"人做决定"的那条路**——要判允许写入者与职责分离。
+
+### Element: api:mcp.tool.plugin.list
+- module: xops-script
+- consumers: [agent]
+- 列出这个项目里已安装的插件。项目成员。
+
+### Element: api:mcp.tool.plugin.candidates
+- module: xops-script
+- consumers: [agent]
+- 列出候选插件（还没生效的那些）。项目成员。
+
+### Element: api:mcp.tool.plugin.show
+- module: xops-script
+- consumers: [agent]
+- 看一个版本的**源码、能力声明与测试结果**。**候选与已安装一视同仁，项目成员都读得到**
+  （`PLG-010`、`I-T`）。
+- ⚠️ 理由变了，结论没变：它现在没有完全权限了，**但它的判断仍然能结算流程节点**。
+  **隔离管的是它能碰什么，管不到它说什么。**
+- 回话里的 `disclosure` 就是安装时要逐条交回的那份原文。
+
+### Element: api:mcp.tool.plugin.history
+- module: xops-script
+- consumers: [agent]
+- 一个插件的全部版本。项目成员。
+
+### Element: api:mcp.tool.plugin.install
+- module: xops-script
+- consumers: [agent]
+- 把一个候选装进项目。**维护者及以上**（`PLG-008`）。
+- `acknowledged` 是必填项：把 `plugin.show` 给出的 `disclosure` **逐条抄回来**，
+  对不上就装不了。**这条让"不看披露直接装"在接口上不可表达**（`PLG-007`）。
+- 留痕记下谁装的、哪次执行产出的、声明了哪些能力、用例是什么、结果如何（`PLG-011`）。
+
+### Element: api:mcp.tool.plugin.disable
+- module: xops-script
+- consumers: [agent]
+- 停用一个版本。维护者及以上。**历史记录完整保留。**
+
+### Element: api:mcp.tool.plugin.config.set
+- module: xops-script
+- consumers: [agent]
+- 写一份插件配置。**项目所有者**（`PLG-008`）。整份覆盖写。
+- 加密存储，**不落在 `_plugins` 表里**（`PLG-015`）——那张表可查询，
+  把凭据放进去等于公开。回话里也只有键名。
+
+### Element: api:mcp.tool.plugin.config.keys
+- module: xops-script
+- consumers: [agent]
+- 看这份配置有哪几个键。**只有键名，没有值——包括所有者自己也读不出原文**（`I-A`）。
+- 它只在调用那一刻注入给这个插件自己，**且只在它声明了这项能力时**。

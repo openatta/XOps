@@ -136,7 +136,13 @@ pub fn schema(
             text("plugin", true)?,
             text("version", true)?,
             enumerated("state", &["candidate", "installed", "disabled"], true)?,
+            // 在哪个位置被调用，入口叫什么。**没有这两列，这一行复现不了那次调用。**
+            enumerated("position", &["transition", "output"], true)?,
+            text("entry", true)?,
             long_text("source")?,
+            // **能力声明是版本的一部分**（`PLG-009`），且**对成员可读**（`I-T`）——
+            // 所以它必须是这一行自己的一列，不能挂在别处。
+            long_text("capabilities")?,
             long_text("tests")?,
             long_text("testResult")?,
             text("generatedBy", false)?,
@@ -223,6 +229,33 @@ mod tests {
                 runs.column(auto).is_none(),
                 "{auto} 是自动补的列位，不该被声明"
             );
+        }
+    }
+
+    #[test]
+    fn 插件表自包含() {
+        // RET-009 的已知悬空：`generatedBy` 指向的 `_runs` 行会到期被清理。
+        // 所以源码、**能力声明**、用例、测试结果、安装人必须都在这一行里。
+        let plugins = schema(
+            PLUGINS,
+            Some(ProjectId::generate()),
+            "acme",
+            Timestamp::from_millis(0),
+        )
+        .unwrap();
+        for column in [
+            "plugin",
+            "version",
+            "state",
+            "position",
+            "entry",
+            "source",
+            "capabilities",
+            "tests",
+            "testResult",
+            "installedBy",
+        ] {
+            assert!(plugins.column(column).is_some(), "少了 {column}");
         }
     }
 

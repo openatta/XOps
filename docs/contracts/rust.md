@@ -1054,3 +1054,98 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   有测试扫源码来守这条——**它是那一刀能成立的全部前提**。
 - 指定了流转插件时，① 里的"满足筛选"由插件替代，**②～⑦ 一条不减，且先判完**——
   不满足的行根本不会被交给插件（`FLW-028`）。
+
+### Element: rust:xops-script#Capabilities
+- module: xops-script
+- consumers: [RP-15, RP-10, RP-18]
+- 一份能力声明。**能力默认为零，未声明即没有**（`I-Z`）——**流转插件没有可声明项**，
+  输出插件只能声明三样：出网白名单 · 读自己的配置 · 读声明过的表。
+- `check(position)` 挡两件：流转插件声明了任何东西 · 声明读 `_notices`（`NTF-012`）。
+- `disclose()` 是安装时那份**逐条披露**的原文（`PLG-007`）。它同时是 `install` 的入参，
+  **所以"不看披露直接装"在接口上不可表达**，不是靠人自觉。
+- `allows_host` 由 `net::fetch` **在重定向循环里面**调用。把它挪到循环外面，
+  白名单就只对第一跳成立。
+
+### Element: rust:xops-script#Position
+- module: xops-script
+- consumers: [RP-15, RP-10]
+- 两个调用位置，**不存在第三个**（`PLG-001`）。
+
+### Element: rust:xops-script#Grant
+- module: xops-script
+- consumers: [RP-15, RP-10]
+- 这次调用给了什么：一份能力声明 + 一个可选的宿主。**没有宿主等于三样都给不了。**
+- 载体里每一处绑定注入都挂在 `if capabilities.…` 后面，
+  有一条枚举源码的测试盯着这件事。
+
+### Element: rust:xops-script#Host
+- module: xops-script
+- consumers: [RP-10, RP-18]
+- 宿主这一侧的三个方法，对应输出插件能声明的三样。**没声明的那一样根本不会被调到**
+  ——不是它返回错误，是 JS 那一侧没有对应的函数。
+
+### Element: rust:xops-script#Net
+- module: xops-script
+- consumers: [xopsd]
+- 谁去真的发包。**XOps 不实现它**——这是一个接缝，不是一个 HTTP 客户端
+  （`PLG-004`：平台不提供"发消息"这种能力，也不定义"通道"这个概念）。
+- 没接后端就传 `Denied`：声明了出网的插件也发不出去，**而这件事在部署层面是看得见的**。
+
+### Element: rust:xops-script#invoke
+- module: xops-script
+- consumers: [RP-15, RP-10]
+- 跑一次插件。**每次新建一个 `Runtime`，调用结束整个扔掉**——"调用之间不共享任何状态"
+  是这样兑现的，不是靠清理全局对象。
+- **插件自己的失败不是 `Err`**：超时与异常是 `Outcome::TimedOut` / `Outcome::Threw`，
+  因为那是一次正常的求值结果。
+- 死循环由**字节码级中断**兜住（`PLG-013`）：表现是"这次求值超时"，
+  **不是"一个线程转死了"**。
+
+### Element: rust:xops-script#compile_check
+- module: xops-script
+- consumers: [RP-16]
+- `PLG-006` 的"编译"= QuickJS 编译 + **入口导出检查**（D54）。
+
+### Element: rust:xops-script#generate
+- module: xops-script
+- consumers: [RP-10, RP-18]
+- 生成流水线：编译 · **在真载体里按声明的能力跑用例** · 静态检查。
+  三样全过才产出一个候选（`I-K`）。
+- 静态检查只剩两件（`PLG-017`）：入口在不在 · 声明与位置配不配。
+  **够不到的东西不需要禁**——载体不给绑定，脚本就没有那条路。
+
+### Element: rust:xops-script#Plugin
+- module: xops-script
+- consumers: [RP-15, RP-10, RP-18]
+- 一个插件的一个版本。**已安装的版本不可变，能力声明是版本的一部分**（`PLG-009`）：
+  改就是生成一个新候选再装一次，**改能力也是**。
+- 源码、能力声明、用例、结果、安装人**全部内联**——`RET-009` 的已知悬空要求它自包含。
+
+### Element: rust:xops-script#Plugins
+- module: xops-script
+- consumers: [RP-15, RP-10, RP-17, RP-18]
+- 插件的读写面与安装治理。三档权限照 `PLG-008` 分。
+- `install` 要调用方把披露原文**逐条**交回来，对不上就装不上。
+- `host_for` 是"配置只注入给该插件、且只在它声明了这项能力时"的那处兑现——
+  **没声明就连读都不读一次**。
+
+### Element: rust:xops-script#evaluate_transition
+- module: xops-script
+- consumers: [RP-15]
+- 流转插件求值的入口。三样输入由平台在调用前查好（`PLG-002`）。
+- **超时与异常都归到"这个节点没过"，绝不视为通过**（`PLG-013`）。
+- 交回的行**只肯代写结算表与主体表两张**，且**对主体表只能 update**——
+  insert 等于让插件自己开出新实例（`I-R`、`CON-003`）。
+  **本包不写，只把不该代写的挡在交出去之前。**
+
+### Element: rust:xops-script#run_output
+- module: xops-script
+- consumers: [RP-10]
+- 输出插件的入口，接在 onComplete 上。
+- 它的返回值里**没有任何写表的路径**——"输出插件写不了任何表"（`I-R`）在这里是
+  **类型上的**，不是检查出来的。
+
+### Element: rust:xops-script#triggers_evaluation
+- module: xops-script
+- consumers: [RP-15]
+- **交回、由平台代写的行不再触发插件求值**——自激回路从这里断掉（`PLG-013`、`I-R`）。

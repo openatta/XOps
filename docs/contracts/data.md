@@ -163,3 +163,17 @@ sql:meta.projection.<规则>           事件到当前视图的投影规则
 - 表目录落在这张平台表上。行标识由 `(项目, 表名)` 定死，所以**同一张表的每次 schema 变更
   都落在同一行上**——它的单行历史就是这张表的 schema 变更史。
 - 它**不是那五张系统表之一**，用户看不到它，也不参与建表、看板与专属 tool 的派发。
+
+### Element: sql:table._plugins
+- module: xops-table
+- 每个插件的每个版本一行（`TBL-009`）。项目级系统表，**只有平台能写**。
+- 列：`plugin` · `version` · `state`（候选/已安装/已停用）· `position`（流转/输出）·
+  `entry` · `source` · `capabilities` · `tests` · `testResult` · `generatedBy` ·
+  `installedBy` · `installedAt`。
+- **`position` `entry` `capabilities` 三列是 D59 补的**：`TBL-009` 原来的列表写在 D52 之前，
+  那时插件"与平台同权限"，既没有能力声明也没有"载体入口"这个概念。D52 之后这三样
+  都成了这一行必须自己回答的事——`PLG-009`（能力声明是版本的一部分）·
+  `I-T`（它对成员可读）· `RET-009`（`generatedBy` 指向的 `_runs` 行会到期被清理，
+  所以这一行必须自包含）。**少一列就有一条要求落不了地。**
+- ⚠️ **插件配置不在这张表里，所以它没有对应的列元素**（`PLG-015`）。
+  它加密后落在 KV 的一个非行空间上，**是全系统唯一一份不以表的形式存在的状态**（`I-A`）。

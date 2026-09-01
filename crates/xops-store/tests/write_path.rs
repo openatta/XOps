@@ -708,3 +708,75 @@ fn 事件已落但水位没落时认下来而不是覆盖() {
         );
     }
 }
+
+// ——————————————————————————————— ①' 补齐位 ———————————————————————————————
+
+/// 一个会往 payload 里塞序号的补齐位。序号从它自己的计数器来。
+struct Numbering {
+    next: AtomicUsize,
+}
+
+impl xops_store::PreWrite for Numbering {
+    fn prepare(&self, mut request: WriteRequest) -> Result<WriteRequest> {
+        let seq = self.next.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(object) = request.payload.as_object_mut() {
+            object.insert("seq".into(), json!(seq));
+        }
+        Ok(request)
+    }
+}
+
+#[test]
+fn 补齐在区间内因而序号不会撞() {
+    for (name, store) in stores() {
+        let engine = Arc::new(engine(store).with_pre_write(Arc::new(Numbering {
+            next: AtomicUsize::new(0),
+        })));
+        let bugs = table("bugs");
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let engine = Arc::clone(&engine);
+            let bugs = bugs.clone();
+            handles.push(thread::spawn(move || {
+                engine.write(platform_insert(&bugs, json!({}))).unwrap()
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let numbers: std::collections::BTreeSet<u64> = engine
+            .events(&bugs, 0, 100)
+            .unwrap()
+            .iter()
+            .filter_map(|event| event.payload["seq"].as_u64())
+            .collect();
+        assert_eq!(numbers.len(), 16, "{name}：16 个写要拿到 16 个不同的号");
+    }
+}
+
+/// 一个想把写挪到别的表去的补齐位。
+struct Hijack;
+
+impl xops_store::PreWrite for Hijack {
+    fn prepare(&self, request: WriteRequest) -> Result<WriteRequest> {
+        Ok(WriteRequest {
+            table: TableName::new("elsewhere").unwrap(),
+            ..request
+        })
+    }
+}
+
+#[test]
+fn 补齐改不了表因为锁已经取了() {
+    for (name, store) in stores() {
+        let engine = engine(store).with_pre_write(Arc::new(Hijack));
+        let error = engine
+            .write(platform_insert(&table("bugs"), json!({})))
+            .unwrap_err();
+        assert!(
+            error.message().contains("取锁之前就定了"),
+            "{name}：{}",
+            error.message()
+        );
+    }
+}

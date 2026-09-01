@@ -308,13 +308,16 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-mcp
 - consumers: [RP-04 起各包]
 - 窄接口的输入形状。`FieldType` 是穷举 enum，**没有 `Object` / `Any` / `Json`**（`MCP-004`）。
-- `to_json_schema()` 渲染 JSON Schema 2020-12——MCP 的 `tools/list` 用它，
-  契约基线的方言文件（`api:mcp.tool.*`）也是它。
+- 本次新增 `Record`：**形状被声明死了的**嵌套记录。它不是口子，理由见
+  `api:mcp.registry.record-field`。
+- `to_json_schema()` 渲染 JSON Schema 2020-12，**嵌套对象一样带 `additionalProperties: false`**。
 
 ### Element: rust:xops-mcp#ToolSpec
 - module: xops-mcp
 - consumers: [RP-04 起各包]
 - 五样声明。**没有公开构造方式**，只能经 `ToolSpec::builder`，少一样就 `build()` 不出来。
+- 本次多一样可选的：`scoped_to(project)`——只属于某个项目的 tool（表专属的那些）。
+  不声明就是"到处都在"。
 
 ### Element: rust:xops-mcp#Tool
 - module: xops-mcp
@@ -332,7 +335,10 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-mcp
 - consumers: [RP-04 起各包]
 - tool 目录。`visible_to` 与调用鉴权**共用同一个判定**（`allows`）——
-  `MCP-009` 的"裁剪不是只藏起来"因此是结构性的，不是两份各写一遍的逻辑。
+  `MCP-009` 的"裁剪不是只藏起来"因此是结构性的。
+- 本次接上**动态来源**（`add_source` / `ToolSource`）：`visible_to` 与 `get` 同时看
+  静态注册的与此刻派发出来的，**静态的优先**——派发出来的 tool 盖不掉注册过的。
+- `visible_to` 多收一个 `project`：表专属 tool 只在它自己那个项目里出现。
 
 ### Element: rust:xops-mcp#McpServer
 - module: xops-mcp
@@ -367,3 +373,92 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [xopsd]
 - 手写的、阻塞式的、只认 `Content-Length` 的 HTTP/1.1，加一个 stdio。
 - **为一条路由引一整套异步栈进来，换回的是"两个服务面共用一个路由层"这个正好不该有的东西。**
+
+### Element: rust:xops-store#PreWrite
+- module: xops-store
+- consumers: [RP-04]
+- **① 之前的补齐位。** 在取完锁、校验之前改写这次请求。
+- 它存在的理由是一件 RP-01 落地时没看清的事：**自动补的列位有一部分必须在区间内算**。
+  自增序号就是那一部分——两个并发写如果各自在区间外算一次"下一个号"，会算出同一个。
+- RP-01 的包文档写着"点位留错了就回头修本包，不要在下游绕开"。这就是那次回头修：
+  **新增一个位，不改 `SchemaCheck` 的形状**，因为后者已经有实现方了。
+- 补齐**只能改 payload**：表、行与写法在取锁之前就定了，动它们会让手里那把锁不再是该拿的那把——
+  当场报错，不静默越界。
+
+### Element: rust:xops-mcp#ToolSource
+- module: xops-mcp
+- consumers: [RP-04, RP-17]
+- 运行时才知道有哪些 tool 的那一类来源。**`MCP-005` 必须落在其上的位。**
+- 派发出来的 tool 与静态注册的**走同一条路**——同样交出五样、同样过 schema 校验、
+  同样按角色裁剪。这正是 `MCP-005` 不构成对 `MCP-004` 破例的原因。
+
+### Element: rust:xops-table#ColumnType
+- module: xops-table
+- consumers: [RP-05 起各包]
+- **穷举的十一种**（`TBL-017`）：文本 · 长文本 · 整数 · 小数 · 布尔 · 时间 · 枚举 ·
+  自增序号 · 行引用 · 二进制 · 派生文本。
+- ⚠️ **没有 `json`，没有"任意对象"**（`TBL-021`）。
+- 自增序号与派生文本**用户写不了、insert 之后也改不了**（`TBL-020`）。
+- 行引用**只看形状**：平台不校验它指向的行存不存在，也不级联（`TBL-019`、`TBL-023`）。
+
+### Element: rust:xops-table#Column
+- module: xops-table
+- consumers: [RP-05 起各包]
+- 列名撞了 `AUTO_COLUMNS` 就构造不出来——`TBL-014` 的"任何列声明都不能覆盖它们"落在这里。
+
+### Element: rust:xops-table#TableId
+- module: xops-table
+- consumers: [RP-05 起各包]
+- 用户表：小写字母开头、只含小写字母数字与单连字符、**不能以 `_` 或 `sys-` 开头**。
+- `slug()` 是它在 tool 名里的那一段（`_runs` → `sys-runs`）。
+
+### Element: rust:xops-table#TableSchema
+- module: xops-table
+- consumers: [RP-05 起各包]
+- 带一份**项目短名的副本**：派生文本要用 `{project.slug}`，而那一步发生在写入区间里——
+  在锁内去问身份目录要一次短名，等于把一次查询接进这张表的写吞吐。短名创建后不可变，抄一份是安全的。
+- `physical()` 是它给 RP-01 写入路径用的名字：`p<项目>.<表名>`。
+  **业务上的"表"是 `(项目, 名字)`**，两个项目各建一张 `bugs` 是完全正常的事。
+
+### Element: rust:xops-table#Protection
+- module: xops-table
+- consumers: [RP-05 起各包]
+- `TBL-004`：**建表时声明，之后不可降级**——API 上根本没有改它的路。
+
+### Element: rust:xops-table#WrittenBy
+- module: xops-table
+- consumers: [RP-05, RP-11, RP-12, RP-15, RP-16]
+- **恰好四种取值，且必须自包含**（`TBL-015`）。②③ 内联那几项，**不能只存一个指向 `_runs` 的指针**——
+  `_runs` 的行有保留期而结算行没有，一个月后还要能回答"这一票是谁的"，靠的就是内联的任务所有者。
+- `trusted()`：**"不可信内容"不是一个额外的标记位，是这个类型的自然结果**（`TBL-016`）。
+- 它与事件上的 `Actor` 是两层：事件的 actor 回答"哪一类"，行上的 `writtenBy` 回答"具体是谁、凭什么"。
+
+### Element: rust:xops-table#Catalog
+- module: xops-table
+- consumers: [xopsd]
+- 表目录，**同时是写入区间的 ①' 与 ①**。目录本身落在 `_tables` 平台表上，
+  因而每次 schema 变更都自带一条不可变事件，`reload()` 能从事件流把它重建回来。
+
+### Element: rust:xops-table#Tables
+- module: xops-table
+- consumers: [RP-05, RP-11, RP-12, RP-15, RP-16, RP-17, RP-18]
+- 目录与行的读写面。**写串行与四步区间归 RP-01，本包只是用它。**
+- 系统表**只有平台能写**：非 `WrittenBy::Platform` 的写当场被拒（`TBL-003`）。
+- `history()` **软删过的表照样查得到**（`TBL-026`）。
+- ⚠️ `history()` 扫的是整张表的事件流再按行过滤。表大了之后这里要一个按行的索引，
+  而那个索引该建在这里，不是让调用方各自记一份。
+
+### Element: rust:xops-table#DropGuard
+- module: xops-table
+- consumers: [RP-14]
+- "这张表还被流程引用着吗"。**被引用为结算表或主体表的表不能删**（`TBL-026`），
+  而那是 RP-14 才知道的事。现在挂一个永远放行的实现。
+
+### Element: rust:xops-table#RowVersion
+- module: xops-table
+- consumers: [RP-05]
+
+### Element: rust:xops-table#TableTools
+- module: xops-table
+- consumers: [xopsd]
+- 表专属 tool 的派发源。**建表即派发、删表即停派**——每次被问的时候现算。

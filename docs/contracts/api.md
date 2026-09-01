@@ -91,8 +91,10 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - consumers: [RP-04 起各包]
 - 字段类型是一个**穷举的 enum，里面没有"任意对象"**（`MCP-004`）。想写一个通用透传 tool，
   得先改那个 enum——这条与 `TBL-021`（不提供 json 列类型）是同一条纪律的两处落点。
-- 渲染出的 JSON Schema 一律 `additionalProperties: false`：`MCP-003` 在协议层的兑现。
-- 长文本超限**拒绝，不截断**（`MCP-014`）——截断会让调用方以为写进去的是完整内容。
+- 渲染出的 JSON Schema 一律 `additionalProperties: false`（**嵌套记录也一样**）：
+  `MCP-003` 在协议层的兑现。
+- 长文本超限**拒绝，不截断**（`MCP-014`）。
+- 本次新增 `Record`：见 `api:mcp.registry.record-field`。
 
 ### Element: api:mcp.error.contract
 - module: xops-mcp
@@ -139,3 +141,56 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - ⚠️ **注册位在 RP-03，实现在 RP-14。** 现在挂的是空实现：tool 存在、形状定死、调得通、
   返回空列表。RP-14 接进来时改的是那个 trait 的实现，不是这一层的注册与 schema——
   而后者一旦要改，全部客户端跟着改。
+
+### Element: api:mcp.tool.table.create
+- module: xops-table
+- consumers: [agent]
+- 建表：声明列、列类型与保护级别。`columns` 是一个**形状被声明死了的**记录列表。
+
+### Element: api:mcp.tool.table.add-column
+- module: xops-table
+- consumers: [agent]
+- 加一列。**新列对历史行为空。改列类型、删列、改列名不做**——错误信息指向"新建一张表自己搬"。
+
+### Element: api:mcp.tool.table.describe
+- module: xops-table
+- consumers: [agent]
+
+### Element: api:mcp.tool.table.list
+- module: xops-table
+- consumers: [agent]
+- 列出项目里的表。**软删过的不在其中。**
+
+### Element: api:mcp.tool.table.drop
+- module: xops-table
+- consumers: [agent]
+- 软删（`TBL-026`）：从列出结果中消失、专属 tool 停止派发，**行与事件一律保留、单行历史仍可查**。
+- **表名不可复用**；被流程引用为结算表或主体表的表不能删（那道判定的位在 `rust:xops-table#DropGuard`，RP-14 接）。
+
+### Element: api:mcp.tool.table.history
+- module: xops-table
+- consumers: [agent, RP-05 的读模型]
+- 一行的完整历史：谁、何时、改了什么。**删除那一条也带署名**——"谁删的"是这一问的一半。
+
+### Element: api:mcp.dispatch.table-tools
+- module: xops-table
+- consumers: [agent]
+- **`MCP-005` 的落点**：每张表建好之后派发 `row.<表>.{insert,update,delete,select}`，
+  各自带**由该表 schema 生成的固定形状输入 schema**。
+- **不存在 `{table, values: 任意形状}` 的通用写 tool**：列名与类型在协议层是被声明过的。
+- 派发规则，逐条：
+  - 系统表**只派发 `select`**——它们只有平台能写（`TBL-003`）。
+  - 全局表（`_notices`）**一个都不派发**——它只有两个专属 tool，且在 RP-17（`NTF-009`）。
+  - 自增序号与派生文本**不出现在写 tool 的参数里**——它们是平台算的。
+  - 写 tool 要的角色由保护级别决定：普通表按 `WriteTable`，受保护表按 `WriteProtectedTable`。
+  - tool 名里系统表的 `_` 换成 `sys-`（`_` 不是合法的 tool 名字符）；
+    **用户表因此不能以 `sys-` 开头**，否则两者会撞。
+- **建表即派发、删表即停派**：它每次被问的时候现算，不需要谁去通知它。
+
+### Element: api:mcp.registry.record-field
+- module: xops-mcp
+- consumers: [RP-05 起各包]
+- 形状被声明死了的嵌套记录字段。
+- ⚠️ **它不是 `MCP-004` 的口子**：那一条禁的是"接受**任意**结构"，而这里的子字段逐个声明，
+  渲染出的 JSON Schema 里嵌套对象一样带 `additionalProperties: false`。
+  没有它，"建表时声明有哪些列"只能拆成几条平行的数组——那不会更窄，只会更容易对错位。

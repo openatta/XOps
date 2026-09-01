@@ -156,7 +156,8 @@ impl McpServer {
     /// 拿到过的最高角色**给一个概览——`tools/list` 在协议里没有项目这个概念，
     /// 而"精确到项目"的那个答案由 `identity.capabilities` 给。
     fn list_tools(&self, identity: &Identity, params: &Value) -> Result<Value> {
-        let (role, archived) = match meta_project(params)? {
+        let asked = meta_project(params)?;
+        let (role, archived) = match asked {
             Some(project) => {
                 let (record, role) = self.directory.authorize(
                     identity.user.id,
@@ -169,9 +170,9 @@ impl McpServer {
         };
         let tools: Vec<Value> = self
             .registry
-            .visible_to(role, archived)
+            .visible_to(role, archived, asked)?
             .iter()
-            .map(|spec| spec.describe())
+            .map(|tool| tool.spec().describe())
             .collect();
         Ok(json!({"tools": tools}))
     }

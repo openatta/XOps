@@ -1,0 +1,19 @@
+[package]
+name = "xops-table"
+description = "表 schema · 列类型 · 投影 · 软删 · 单行历史 · 表专属 tool 的派发。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

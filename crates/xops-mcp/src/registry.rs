@@ -101,6 +101,8 @@ pub struct ToolSpec {
     requirement: Requirement,
     idempotency: Idempotency,
     audit: EventKind,
+    /// 只属于某个项目的 tool（表专属的那些）。`None` 表示到处都在。
+    project: Option<ProjectId>,
 }
 
 impl ToolSpec {
@@ -113,6 +115,7 @@ impl ToolSpec {
             requirement: None,
             idempotency: None,
             audit: None,
+            project: None,
         }
     }
 
@@ -146,6 +149,22 @@ impl ToolSpec {
         &self.audit
     }
 
+    /// 这个 tool 属于哪个项目。表专属 tool 只在它自己那个项目里出现。
+    #[must_use]
+    pub fn project(&self) -> Option<ProjectId> {
+        self.project
+    }
+
+    /// 在这个项目的能力发现里该不该出现。
+    #[must_use]
+    pub fn visible_in(&self, project: Option<ProjectId>) -> bool {
+        match (self.project, project) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(mine), Some(asked)) => mine == asked,
+        }
+    }
+
     /// MCP `tools/list` 里的一条。
     #[must_use]
     pub fn describe(&self) -> Value {
@@ -166,6 +185,7 @@ pub struct ToolSpecBuilder {
     requirement: Option<Requirement>,
     idempotency: Option<Idempotency>,
     audit: Option<String>,
+    project: Option<ProjectId>,
 }
 
 impl ToolSpecBuilder {
@@ -200,6 +220,13 @@ impl ToolSpecBuilder {
         self
     }
 
+    /// 只在某个项目里出现（表专属 tool）。
+    #[must_use]
+    pub fn scoped_to(mut self, project: ProjectId) -> Self {
+        self.project = Some(project);
+        self
+    }
+
     /// # Errors
     /// 五样里少了任何一样，或者名字 / 事件类型不合形状。
     pub fn build(self) -> Result<ToolSpec> {
@@ -216,6 +243,7 @@ impl ToolSpecBuilder {
             requirement: self.requirement.ok_or_else(|| missing("需要的角色"))?,
             idempotency: self.idempotency.ok_or_else(|| missing("幂等性"))?,
             audit: EventKind::new(self.audit.ok_or_else(|| missing("留痕形状"))?)?,
+            project: self.project,
         })
     }
 }
@@ -330,10 +358,26 @@ pub trait Tool: Send + Sync + 'static {
     fn call(&self, context: &CallContext<'_>) -> Result<Value>;
 }
 
+/// 运行时才知道有哪些 tool 的那一类来源。
+///
+/// **`MCP-005` 的落点**：每张表建好之后平台为它派发一组专属的读写 tool，
+/// 而"现在有哪些表"是运行时的事。派发**机制**归 RP-04，这里只提供它必须落在其上的位。
+///
+/// ⚠️ 派发出来的 tool 与静态注册的**走同一条路**——同样要交出五样、同样过 schema 校验、
+/// 同样按角色裁剪。这正是 `MCP-005` 不构成对 `MCP-004` 破例的原因。
+pub trait ToolSource: Send + Sync + 'static {
+    /// 此刻有哪些。
+    ///
+    /// # Errors
+    /// 目录读不出来。
+    fn tools(&self) -> Result<Vec<Arc<dyn Tool>>>;
+}
+
 /// tool 目录。
 #[derive(Default)]
 pub struct Registry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
+    sources: Vec<Arc<dyn ToolSource>>,
 }
 
 impl std::fmt::Debug for Registry {
@@ -361,9 +405,34 @@ impl Registry {
         Ok(())
     }
 
+    /// 接一个动态来源（`MCP-005`）。
+    pub fn add_source(&mut self, source: Arc<dyn ToolSource>) {
+        self.sources.push(source);
+    }
+
+    /// 按名字找。**先找静态的，再问动态来源**——派发出来的 tool 盖不掉注册过的。
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<&Arc<dyn Tool>> {
-        self.tools.get(name)
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        if let Some(tool) = self.tools.get(name) {
+            return Some(Arc::clone(tool));
+        }
+        self.sources
+            .iter()
+            .filter_map(|source| source.tools().ok())
+            .flatten()
+            .find(|tool| tool.spec().name().as_str() == name)
+    }
+
+    /// 静态注册的加上此刻派发出来的。
+    ///
+    /// # Errors
+    /// 某个来源读不出目录。
+    pub fn all(&self) -> Result<Vec<Arc<dyn Tool>>> {
+        let mut out: Vec<Arc<dyn Tool>> = self.tools.values().map(Arc::clone).collect();
+        for source in &self.sources {
+            out.extend(source.tools()?);
+        }
+        Ok(out)
     }
 
     #[must_use]
@@ -376,7 +445,7 @@ impl Registry {
         self.tools.is_empty()
     }
 
-    /// 全部已注册 tool 的声明。枚举验收用它。
+    /// 静态注册的那些的声明。枚举验收用它——动态那部分见 [`Self::all`]。
     pub fn specs(&self) -> impl Iterator<Item = &ToolSpec> {
         self.tools.values().map(|tool| tool.spec())
     }
@@ -385,11 +454,21 @@ impl Registry {
     ///
     /// ⚠️ **裁剪不是只藏起来。** 看不到的那些调用也会失败——两处用的是同一个判定
     /// （[`allows`]），不是两份各写一遍的逻辑。
-    #[must_use]
-    pub fn visible_to(&self, role: Option<Role>, archived: bool) -> Vec<&ToolSpec> {
-        self.specs()
-            .filter(|spec| allows(spec, role, archived))
-            .collect()
+    ///
+    /// # Errors
+    /// 某个动态来源读不出目录。
+    pub fn visible_to(
+        &self,
+        role: Option<Role>,
+        archived: bool,
+        project: Option<ProjectId>,
+    ) -> Result<Vec<Arc<dyn Tool>>> {
+        Ok(self
+            .all()?
+            .into_iter()
+            .filter(|tool| allows(tool.spec(), role, archived))
+            .filter(|tool| tool.spec().visible_in(project))
+            .collect())
     }
 }
 

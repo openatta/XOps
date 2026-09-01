@@ -84,3 +84,82 @@ sql:meta.projection.<规则>           事件到当前视图的投影规则
 - **`applied` 可以落后于 `seq`，那正是它存在的理由**：没有事务，事件与投影之间会崩。
   补法是重放不是回滚——**事件是真相，投影是它的缓存**。区间开始时对锁集合里每张表修一次，
   正常情况下只多花一次 `get`。
+
+### Element: sql:meta.column-type.text
+- module: xops-table
+- 短文本，默认上限 512 字符。
+
+### Element: sql:meta.column-type.long-text
+- module: xops-table
+- Markdown 正文这类，默认上限 256 KiB。**超限拒绝，不截断**（`MCP-014`）。
+
+### Element: sql:meta.column-type.integer
+- module: xops-table
+
+### Element: sql:meta.column-type.decimal
+- module: xops-table
+
+### Element: sql:meta.column-type.bool
+- module: xops-table
+
+### Element: sql:meta.column-type.timestamp
+- module: xops-table
+- UTC 毫秒。**存的是数字**，不是日期字符串——换库时不必关心日期方言。
+
+### Element: sql:meta.column-type.enum
+- module: xops-table
+- 取值集合**由用户声明**。
+
+### Element: sql:meta.column-type.sequence
+- module: xops-table
+- 自增序号：**项目内、每表独立，不跨项目共享计数器**（`TBL-018`）。
+- 在写入区间内取号（`PreWrite`），所以两个并发写不会撞。
+
+### Element: sql:meta.column-type.row-ref
+- module: xops-table
+- 存另一张表的行 ID。**平台不校验、不级联**（`TBL-019`、`TBL-023`）。
+
+### Element: sql:meta.column-type.blob
+- module: xops-table
+- 二进制，存 base64 文本，默认上限 4 MiB。
+
+### Element: sql:meta.column-type.derived
+- module: xops-table
+- 派生文本：模板只认 `{project.slug}` 与 `{<同一行的列>}`。
+  **insert 时生成一次、之后不变**（`TBL-020`）；派生列不能引用另一个派生列。
+
+### Element: sql:meta.auto-column.writtenBy
+- module: xops-table
+- 四种自包含取值（`TBL-015`）。**任何列声明都不能覆盖它**；参数里带的一律被盖掉（`I-B`）。
+
+### Element: sql:meta.auto-column.at
+- module: xops-table
+- 写入时刻，从 `Clock` 来。
+
+### Element: sql:meta.auto-column.revision
+- module: xops-table
+- 读的哪个代码修订。**跟着 `writtenBy` 的执行那一类进来**，不单独声明。
+
+### Element: sql:meta.auto-column._instance
+- module: xops-table
+- 这一行属于哪个流程实例。**位在这里，值由 RP-15 填**。
+
+### Element: sql:meta.auto-column.retainUntil
+- module: xops-table
+- 这一行什么时候到期。**位在这里，值由 RP-12 填**。
+
+### Element: sql:meta.projection.physical-table-name
+- module: xops-table
+- 业务表 `(项目, 名字)` → 物理表名 `p<项目>.<名字>`；全局表就是它自己的名字。
+- **业务上的"表"不是数据库里的表**——它是键的一段前缀，所以两个项目各建一张 `bugs`
+  互不相干，而 RP-01 的表锁照样是"一张业务表一把锁"。
+
+### Element: sql:meta.projection.sequence-counter
+- module: xops-table
+- 空间 `table-seq`，键 `物理表名 \0 列名` → i64。**只在写入区间内读改**。
+
+### Element: sql:table._tables
+- module: xops-table
+- 表目录落在这张平台表上。行标识由 `(项目, 表名)` 定死，所以**同一张表的每次 schema 变更
+  都落在同一行上**——它的单行历史就是这张表的 schema 变更史。
+- 它**不是那五张系统表之一**，用户看不到它，也不参与建表、看板与专属 tool 的派发。

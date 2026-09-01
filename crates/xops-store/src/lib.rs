@@ -19,8 +19,8 @@ pub mod store;
 pub use locks::{Held, TableLocks};
 pub use memory::MemoryStore;
 pub use serial::{
-    Deferred, EvalScope, Evaluate, Receipt, Row, RowView, SchemaCheck, WriteEngine, WriteRequest,
-    Writeback,
+    Deferred, EvalScope, Evaluate, PreWrite, Receipt, Row, RowView, SchemaCheck, WriteEngine,
+    WriteRequest, Writeback,
 };
 pub use sqlite::SqliteStore;
 pub use store::{Store, space};

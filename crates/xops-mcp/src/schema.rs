@@ -35,10 +35,20 @@ pub enum FieldType {
     },
     /// 一个 26 字符的 XOps 标识。
     Id,
-    /// 同一种标量的列表，**元素类型也必须是标量**。
+    /// 列表。元素类型也得是这个 enum 里的一种。
     List {
         of: Box<FieldType>,
         max_len: usize,
+    },
+    /// **形状被声明死了的**嵌套记录。
+    ///
+    /// ⚠️ 这不是 `MCP-004` 的口子，理由要说清楚：那一条禁的是"接受**任意**结构、
+    /// 任意上下文或自由指令"，而这里的子字段是逐个声明出来的，渲染出的 JSON Schema
+    /// 里嵌套对象一样带 `additionalProperties: false`，未声明的键照样被拒。
+    /// **没有它，"建表时声明有哪些列"这种参数只能拆成几条平行的数组**——
+    /// 那不会更窄，只会更容易对错位。
+    Record {
+        fields: Vec<Field>,
     },
 }
 
@@ -56,6 +66,10 @@ impl FieldType {
             Self::List { of, max_len } => {
                 json!({"type": "array", "items": of.json_type(), "maxItems": max_len})
             }
+            Self::Record { fields } => Schema {
+                fields: fields.clone(),
+            }
+            .to_json_schema(),
         }
     }
 
@@ -99,6 +113,11 @@ impl FieldType {
                 }
                 Ok(())
             }
+            Self::Record { fields } => Schema {
+                fields: fields.clone(),
+            }
+            .validate(value)
+            .map_err(|error| Error::invalid(format!("{name}：{}", error.message()))),
         }
     }
 }

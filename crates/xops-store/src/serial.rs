@@ -59,6 +59,23 @@ impl Row {
     }
 }
 
+/// ① 之前的补齐位。**RP-04 注入**，本 crate 不知道要补什么。
+///
+/// 它存在的理由是一件在 RP-01 落地时没看清的事：**自动补的列位有一部分必须在区间内算**。
+/// 自增序号就是那一部分——两个并发写如果各自在区间外算一次"下一个号"，会算出同一个。
+/// 把它挪进区间，序号就由表锁串行了。
+///
+/// RP-01 的包文档写着：接进来时若发现必须改写入路径，说明点位当初留错了，**回头修 RP-01**，
+/// 不要在下游绕开。这就是那次回头修——**新增一个位，不改 `SchemaCheck` 的形状**，
+/// 因为后者已经有实现方了。
+pub trait PreWrite: Send + Sync + 'static {
+    /// 在取完锁、校验之前改写这次请求。
+    ///
+    /// # Errors
+    /// 补不出来（比如序号读不到）。这时候整次写中止，②③④ 都不发生。
+    fn prepare(&self, request: WriteRequest) -> Result<WriteRequest>;
+}
+
 /// ① schema 校验。**RP-04 注入**，本 crate 不知道列是什么。
 pub trait SchemaCheck: Send + Sync + 'static {
     /// # Errors
@@ -193,6 +210,7 @@ pub struct WriteEngine {
     store: Arc<dyn Store>,
     clock: Arc<dyn Clock>,
     locks: TableLocks,
+    pre_write: Option<Arc<dyn PreWrite>>,
     schema: Option<Arc<dyn SchemaCheck>>,
     evaluate: Option<Arc<dyn Evaluate>>,
     deferred: Option<Arc<dyn Deferred>>,
@@ -201,6 +219,7 @@ pub struct WriteEngine {
 impl std::fmt::Debug for WriteEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WriteEngine")
+            .field("pre_write", &self.pre_write.is_some())
             .field("schema", &self.schema.is_some())
             .field("evaluate", &self.evaluate.is_some())
             .field("deferred", &self.deferred.is_some())
@@ -216,10 +235,18 @@ impl WriteEngine {
             store,
             clock,
             locks: TableLocks::new(),
+            pre_write: None,
             schema: None,
             evaluate: None,
             deferred: None,
         }
+    }
+
+    /// 接上 ① 之前的补齐位。RP-04 用。
+    #[must_use]
+    pub fn with_pre_write(mut self, pre_write: Arc<dyn PreWrite>) -> Self {
+        self.pre_write = Some(pre_write);
+        self
     }
 
     /// 接上 ①。RP-04 用。
@@ -264,6 +291,25 @@ impl WriteEngine {
             for table in held.tables() {
                 self.repair(table)?;
             }
+
+            // ①' 补齐（区间内算，序号才不会撞）
+            let request = match &self.pre_write {
+                Some(pre_write) => {
+                    let prepared = pre_write.prepare(request.clone())?;
+                    // 锁集合是照着补齐**之前**的请求算的。补齐挪了表、挪了行、换了 op，
+                    // 手里这把锁就不再是该拿的那把 —— 那是一个安静的越界，宁可当场炸。
+                    if prepared.table != request.table
+                        || prepared.row != request.row
+                        || prepared.op != request.op
+                    {
+                        return Err(Error::internal(
+                            "补齐只能改 payload：表、行与写法在取锁之前就定了",
+                        ));
+                    }
+                    prepared
+                }
+                None => request,
+            };
 
             // ① schema 校验
             if let Some(schema) = &self.schema {

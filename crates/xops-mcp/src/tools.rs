@@ -105,11 +105,13 @@ impl Tool for Capabilities {
     }
 
     fn call(&self, context: &CallContext<'_>) -> Result<Value> {
+        let mut asked = None;
         let (role, archived) = match context.arg("project") {
             Some(project) => {
                 let project = xops_identity::ProjectId::from_id(xops_core::Id::parse(
                     project.as_str().unwrap_or_default(),
                 )?);
+                asked = Some(project);
                 // 非成员在这里得到的与"项目不存在"完全一致（PRJ-008）。
                 let (record, role) = self.directory.authorize(
                     context.identity.user.id,
@@ -130,9 +132,9 @@ impl Tool for Capabilities {
         };
         let names: Vec<String> = context
             .registry
-            .visible_to(role, archived)
+            .visible_to(role, archived, asked)?
             .iter()
-            .map(|spec| spec.name().as_str().to_owned())
+            .map(|tool| tool.spec().name().as_str().to_owned())
             .collect();
         Ok(json!({"role": role.map(|role| role.as_str()), "tools": names}))
     }

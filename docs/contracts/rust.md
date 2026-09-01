@@ -303,3 +303,67 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 四张平台表：`_users` · `_tokens` · `_projects` · `_members`。
 - ⚠️ **它们不是「五张系统表」**（`_runs` 那五张是业务上看得见的）。平台表是平台自己的账，
   **不参与建表、看板与表专属 tool 的派发**——RP-04 要把它们排除在外。
+
+### Element: rust:xops-mcp#Schema
+- module: xops-mcp
+- consumers: [RP-04 起各包]
+- 窄接口的输入形状。`FieldType` 是穷举 enum，**没有 `Object` / `Any` / `Json`**（`MCP-004`）。
+- `to_json_schema()` 渲染 JSON Schema 2020-12——MCP 的 `tools/list` 用它，
+  契约基线的方言文件（`api:mcp.tool.*`）也是它。
+
+### Element: rust:xops-mcp#ToolSpec
+- module: xops-mcp
+- consumers: [RP-04 起各包]
+- 五样声明。**没有公开构造方式**，只能经 `ToolSpec::builder`，少一样就 `build()` 不出来。
+
+### Element: rust:xops-mcp#Tool
+- module: xops-mcp
+- consumers: [RP-04 起各包]
+- 干活的那一半。**认证、鉴权、schema 校验、幂等、留痕都已经在外面做完了。**
+
+### Element: rust:xops-mcp#CallContext
+- module: xops-mcp
+- consumers: [RP-04 起各包]
+- 已认证的调用上下文（`MCP-012` 第二件）：调用者 · 目标项目 · 角色 · 幂等键 · 参数 · 目录。
+- `actor()` 是写入署的名——**来自令牌，不来自请求体**（`I-B`）。
+- `envelope()` / `record()` 是统一的留痕构造（`MCP-012` 第四件）。
+
+### Element: rust:xops-mcp#Registry
+- module: xops-mcp
+- consumers: [RP-04 起各包]
+- tool 目录。`visible_to` 与调用鉴权**共用同一个判定**（`allows`）——
+  `MCP-009` 的"裁剪不是只藏起来"因此是结构性的，不是两份各写一遍的逻辑。
+
+### Element: rust:xops-mcp#McpServer
+- module: xops-mcp
+- consumers: [xopsd]
+- 协议核心：一份 JSON-RPC 进来，一份响应出去。**这里没有传输**——协议核心不知道
+  自己被谁喂进来，也因此整段可以被直接测。
+
+### Element: rust:xops-mcp#ErrorContract
+- module: xops-mcp
+- consumers: [RP-04 起各包]
+
+### Element: rust:xops-mcp#Idempotency
+- module: xops-mcp
+- consumers: [xops-mcp]
+- 存的是**响应本身**，不是"见过了"的标记——`MCP-006` 的后半句是"返回与首次相同的结果"，
+  不是"第二次报错"。
+
+### Element: rust:xops-mcp#NON_MCP_ENTRYPOINTS
+- module: xops-mcp
+- consumers: [RP-05, RP-13]
+- **四个非 MCP 入口的清单**（`MCP-013`），每一个都带着"它只能做的那一件事"与出处。
+- 写成可枚举的常量，是为了让"再加一个入口"必须先改这里——而改这里在评审时看得见。
+- ⚠️ **RP-05 与 RP-13 落地时要与这份清单对上**：OAuth 回调 · Git webhook · 会话面 · 令牌管理面。
+
+### Element: rust:xops-mcp#PendingNodes
+- module: xops-mcp
+- consumers: [RP-14]
+- 「我待处理的流程节点」的实现位。**RP-14 换掉的是这个 trait 的实现，不是 tool 的注册与 schema。**
+
+### Element: rust:xops-mcp#transport
+- module: xops-mcp
+- consumers: [xopsd]
+- 手写的、阻塞式的、只认 `Content-Length` 的 HTTP/1.1，加一个 stdio。
+- **为一条路由引一整套异步栈进来，换回的是"两个服务面共用一个路由层"这个正好不该有的东西。**

@@ -1,0 +1,18 @@
+[package]
+name = "xops-mcp"
+description = "MCP server：认证 · 注册骨架 · schema 校验 · 幂等 · 错误契约 · 能力发现 · 传输。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

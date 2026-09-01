@@ -1,0 +1,501 @@
+//! 注册骨架。**本包的全部意义在这个文件里。**
+//!
+//! 注册一个 tool 时必须交出五样：固定形状的输入 schema · 需要的角色 · 是否幂等 ·
+//! 幂等键从哪来 · 留痕形状。**交不出的注册不进来**——这是纪律的落点，不是文档里的一句话。
+//!
+//! 它一旦留了"可以先不声明、以后补"的口子，后面八个包会把这个口子用满。所以
+//! [`ToolSpec`] 没有公开的构造方式，只有一个会当场拒绝你的 builder。
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use serde_json::Value;
+use xops_audit::{AuditEnvelope, AuditLog, EventKind};
+use xops_core::{Actor, Error, Id, Result, Role};
+use xops_identity::{Action, Identity, ProjectId, can_in};
+
+use crate::schema::Schema;
+
+/// tool 的名字：`<域>.<动作>`。
+///
+/// `MCP-011` 说"tool 目录本身是可扩展的，**扩展方式必须统一**"——所以这里校验的是形状，
+/// 不是一张写死的域清单。写死清单的话，每加一个域都要回来改这个文件，
+/// 而那正是这条要避免的事。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ToolName(String);
+
+impl ToolName {
+    pub const MAX_LEN: usize = 64;
+
+    /// # Errors
+    /// 不是 `<域>.<动作>` 的形状。
+    pub fn new(name: impl Into<String>) -> Result<Self> {
+        let name = name.into();
+        let segments: Vec<&str> = name.split('.').collect();
+        let shaped = name.len() <= Self::MAX_LEN
+            && segments.len() >= 2
+            && segments.iter().all(|segment| {
+                !segment.is_empty()
+                    && segment.starts_with(|c: char| c.is_ascii_lowercase())
+                    && segment
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            });
+        if !shaped {
+            return Err(Error::invalid(format!("tool 名要写成 <域>.<动作>：{name}")));
+        }
+        Ok(Self(name))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn domain(&self) -> &str {
+        self.0.split('.').next().unwrap_or(&self.0)
+    }
+}
+
+impl std::fmt::Display for ToolName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// 调这个 tool 要什么权限。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Requirement {
+    /// 平台级：不针对某个项目（查自己是谁、能力发现、令牌管理）。**只要令牌有效即可。**
+    Platform,
+    /// 项目级：参数里必须带 `project`，且调用者在那个项目里要能做这个动作。
+    InProject(Action),
+}
+
+/// 幂等性（`MCP-006`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Idempotency {
+    /// 只读，天然幂等。
+    ReadOnly,
+    /// 有副作用，**接受幂等键**：同一个键重复调用不产生第二次副作用，且返回与首次相同的结果。
+    Keyed,
+    /// 有副作用但不接受幂等键。**必须写清为什么**——这条路存在是为了让"忘了做幂等"
+    /// 与"想清楚了不做"在代码里看起来不一样。
+    NotIdempotent { reason: &'static str },
+}
+
+impl Idempotency {
+    #[must_use]
+    pub const fn has_effects(&self) -> bool {
+        !matches!(self, Self::ReadOnly)
+    }
+}
+
+/// 一个 tool 的全部声明。**没有公开构造方式**，只能经 [`ToolSpec::builder`]。
+#[derive(Debug, Clone)]
+pub struct ToolSpec {
+    name: ToolName,
+    summary: String,
+    input: Schema,
+    requirement: Requirement,
+    idempotency: Idempotency,
+    audit: EventKind,
+}
+
+impl ToolSpec {
+    #[must_use]
+    pub fn builder(name: &str) -> ToolSpecBuilder {
+        ToolSpecBuilder {
+            name: name.to_owned(),
+            summary: None,
+            input: None,
+            requirement: None,
+            idempotency: None,
+            audit: None,
+        }
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &ToolName {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    #[must_use]
+    pub fn input(&self) -> &Schema {
+        &self.input
+    }
+
+    #[must_use]
+    pub fn requirement(&self) -> Requirement {
+        self.requirement
+    }
+
+    #[must_use]
+    pub fn idempotency(&self) -> &Idempotency {
+        &self.idempotency
+    }
+
+    #[must_use]
+    pub fn audit(&self) -> &EventKind {
+        &self.audit
+    }
+
+    /// MCP `tools/list` 里的一条。
+    #[must_use]
+    pub fn describe(&self) -> Value {
+        serde_json::json!({
+            "name": self.name.as_str(),
+            "description": self.summary,
+            "inputSchema": self.input.to_json_schema(),
+        })
+    }
+}
+
+/// 交不齐五样就 `build` 不出来的 builder。
+#[derive(Debug, Clone)]
+pub struct ToolSpecBuilder {
+    name: String,
+    summary: Option<String>,
+    input: Option<Schema>,
+    requirement: Option<Requirement>,
+    idempotency: Option<Idempotency>,
+    audit: Option<String>,
+}
+
+impl ToolSpecBuilder {
+    #[must_use]
+    pub fn summary(mut self, summary: &str) -> Self {
+        self.summary = Some(summary.to_owned());
+        self
+    }
+
+    #[must_use]
+    pub fn input(mut self, schema: Schema) -> Self {
+        self.input = Some(schema);
+        self
+    }
+
+    #[must_use]
+    pub fn requires(mut self, requirement: Requirement) -> Self {
+        self.requirement = Some(requirement);
+        self
+    }
+
+    #[must_use]
+    pub fn idempotency(mut self, idempotency: Idempotency) -> Self {
+        self.idempotency = Some(idempotency);
+        self
+    }
+
+    /// 这个 tool 的留痕形状（`xops_audit::kinds` 里的常量）。
+    #[must_use]
+    pub fn audits(mut self, kind: &str) -> Self {
+        self.audit = Some(kind.to_owned());
+        self
+    }
+
+    /// # Errors
+    /// 五样里少了任何一样，或者名字 / 事件类型不合形状。
+    pub fn build(self) -> Result<ToolSpec> {
+        let missing = |what: &str| {
+            Error::invalid(format!(
+                "tool {} 没有声明{what}——注册骨架不接受'先不声明、以后补'",
+                self.name
+            ))
+        };
+        Ok(ToolSpec {
+            name: ToolName::new(self.name.clone())?,
+            summary: self.summary.ok_or_else(|| missing("说明"))?,
+            input: self.input.ok_or_else(|| missing("输入 schema"))?,
+            requirement: self.requirement.ok_or_else(|| missing("需要的角色"))?,
+            idempotency: self.idempotency.ok_or_else(|| missing("幂等性"))?,
+            audit: EventKind::new(self.audit.ok_or_else(|| missing("留痕形状"))?)?,
+        })
+    }
+}
+
+/// 已认证的调用上下文（`MCP-012` 四件里的第二件）。
+pub struct CallContext<'a> {
+    /// 调用者。**由令牌解析得出**（`TOK-007`、`I-B`）。
+    pub identity: &'a Identity,
+    /// 目标项目（项目级 tool 才有）。
+    pub project: Option<ProjectId>,
+    /// 调用者在那个项目里的角色。
+    pub role: Option<Role>,
+    /// 调用方给的幂等键。
+    pub idempotency_key: Option<String>,
+    /// 已经过 schema 校验的参数。
+    pub args: Value,
+    /// 目录本身。**能力发现要用它**——而 tool 拿不到 `Arc<Registry>`：
+    /// 那会让目录里装着一个装着目录的东西。
+    pub registry: &'a Registry,
+    audit: &'a AuditLog,
+}
+
+impl<'a> CallContext<'a> {
+    #[must_use]
+    pub fn new(
+        identity: &'a Identity,
+        project: Option<ProjectId>,
+        role: Option<Role>,
+        idempotency_key: Option<String>,
+        args: Value,
+        registry: &'a Registry,
+        audit: &'a AuditLog,
+    ) -> Self {
+        Self {
+            identity,
+            project,
+            role,
+            idempotency_key,
+            args,
+            registry,
+            audit,
+        }
+    }
+
+    /// 写入时署的名。**`I-B`：它来自令牌，不来自请求体。**
+    #[must_use]
+    pub fn actor(&self) -> Actor {
+        self.identity.actor()
+    }
+
+    /// 取一个参数（schema 已经保证过形状）。
+    #[must_use]
+    pub fn arg(&self, name: &str) -> Option<&Value> {
+        self.args.get(name).filter(|value| !value.is_null())
+    }
+
+    /// 取一个字符串参数。
+    ///
+    /// # Errors
+    /// 没给或者不是字符串——schema 校验过之后这只会发生在 tool 自己写错字段名时。
+    pub fn text(&self, name: &str) -> Result<&str> {
+        self.arg(name)
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::internal(format!("tool 要的参数 {name} 不在 schema 里")))
+    }
+
+    /// 取一个标识参数。
+    ///
+    /// # Errors
+    /// 同上，或者不是合法标识。
+    pub fn id(&self, name: &str) -> Result<Id> {
+        Id::parse(self.text(name)?)
+    }
+
+    /// 构造一条属于当前项目的留痕（`MCP-012` 四件里的第四件）。
+    ///
+    /// # Errors
+    /// 这是个平台级调用，没有项目；或者事件类型不合形状。
+    pub fn envelope(&self, kind: &str, target: Id, data: Value) -> Result<AuditEnvelope> {
+        let project = self
+            .project
+            .ok_or_else(|| Error::internal("平台级调用没有项目，留痕请用 platform_envelope"))?;
+        AuditEnvelope::project_scoped(kind, project.as_id(), target, data)
+    }
+
+    /// 构造一条平台级留痕。
+    ///
+    /// # Errors
+    /// 事件类型不合形状。
+    pub fn platform_envelope(&self, kind: &str, target: Id, data: Value) -> Result<AuditEnvelope> {
+        AuditEnvelope::platform(kind, self.identity.user.id.as_id(), target, data)
+    }
+
+    /// 追加一条没有业务行的留痕。
+    ///
+    /// # Errors
+    /// 底层写失败。
+    pub fn record(&self, envelope: &AuditEnvelope) -> Result<()> {
+        self.audit.append(&self.actor(), envelope).map(|_| ())
+    }
+}
+
+/// 一个 tool。
+pub trait Tool: Send + Sync + 'static {
+    fn spec(&self) -> &ToolSpec;
+
+    /// 干活。**认证、鉴权、schema 校验、幂等、留痕都已经在外面做完了**——
+    /// `MCP-012`：注册一个 tool 即自动获得全套纪律，各域不需要自己写这些。
+    ///
+    /// # Errors
+    /// 业务上的失败。
+    fn call(&self, context: &CallContext<'_>) -> Result<Value>;
+}
+
+/// tool 目录。
+#[derive(Default)]
+pub struct Registry {
+    tools: BTreeMap<String, Arc<dyn Tool>>,
+}
+
+impl std::fmt::Debug for Registry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Registry")
+            .field("tools", &self.tools.keys())
+            .finish()
+    }
+}
+
+impl Registry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// # Errors
+    /// 重名。
+    pub fn register(&mut self, tool: Arc<dyn Tool>) -> Result<()> {
+        let name = tool.spec().name().as_str().to_owned();
+        if self.tools.contains_key(&name) {
+            return Err(Error::conflict(format!("tool {name} 已经注册过了")));
+        }
+        self.tools.insert(name, tool);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&Arc<dyn Tool>> {
+        self.tools.get(name)
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.tools.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
+    }
+
+    /// 全部已注册 tool 的声明。枚举验收用它。
+    pub fn specs(&self) -> impl Iterator<Item = &ToolSpec> {
+        self.tools.values().map(|tool| tool.spec())
+    }
+
+    /// 能力发现（`MCP-009`）：**按调用者在这个项目里的角色裁剪**。
+    ///
+    /// ⚠️ **裁剪不是只藏起来。** 看不到的那些调用也会失败——两处用的是同一个判定
+    /// （[`allows`]），不是两份各写一遍的逻辑。
+    #[must_use]
+    pub fn visible_to(&self, role: Option<Role>, archived: bool) -> Vec<&ToolSpec> {
+        self.specs()
+            .filter(|spec| allows(spec, role, archived))
+            .collect()
+    }
+}
+
+/// 这个角色能不能调这个 tool。**能力发现与调用鉴权共用它。**
+#[must_use]
+pub fn allows(spec: &ToolSpec, role: Option<Role>, archived: bool) -> bool {
+    match spec.requirement() {
+        Requirement::Platform => true,
+        Requirement::InProject(action) => role.is_some_and(|role| can_in(role, action, archived)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::{Field, FieldType};
+
+    fn full() -> ToolSpecBuilder {
+        ToolSpec::builder("project.create")
+            .summary("建一个项目")
+            .input(Schema::new().field(Field::required(
+                "slug",
+                FieldType::Text { max_len: 24 },
+                "短名",
+            )))
+            .requires(Requirement::Platform)
+            .idempotency(Idempotency::Keyed)
+            .audits(xops_audit::kinds::PROJECT_CREATED)
+    }
+
+    #[test]
+    fn 五样齐了才注册得进来() {
+        assert!(full().build().is_ok());
+    }
+
+    #[test]
+    fn 忘了声明角色就build不出来() {
+        let mut builder = full();
+        builder.requirement = None;
+        let error = builder.build().unwrap_err();
+        assert!(
+            error.message().contains("需要的角色"),
+            "{}",
+            error.message()
+        );
+        assert!(error.message().contains("先不声明、以后补"));
+    }
+
+    #[test]
+    fn 五样里少任何一样都不行() {
+        for (what, mut builder) in [
+            ("说明", full()),
+            ("输入 schema", full()),
+            ("需要的角色", full()),
+            ("幂等性", full()),
+            ("留痕形状", full()),
+        ] {
+            match what {
+                "说明" => builder.summary = None,
+                "输入 schema" => builder.input = None,
+                "需要的角色" => builder.requirement = None,
+                "幂等性" => builder.idempotency = None,
+                _ => builder.audit = None,
+            }
+            let error = builder.build().unwrap_err();
+            assert!(
+                error.message().contains(what),
+                "少了{what}却没报出来：{}",
+                error.message()
+            );
+        }
+    }
+
+    #[test]
+    fn 名字要有域和动作() {
+        assert!(ToolName::new("project.create").is_ok());
+        assert!(ToolName::new("flow.node.settle").is_ok());
+        assert!(ToolName::new("create").is_err());
+        assert!(ToolName::new("Project.Create").is_err());
+    }
+
+    #[test]
+    fn 域取得出来() {
+        assert_eq!(ToolName::new("table.add-column").unwrap().domain(), "table");
+    }
+
+    #[test]
+    fn 有副作用的看得出来() {
+        assert!(!Idempotency::ReadOnly.has_effects());
+        assert!(Idempotency::Keyed.has_effects());
+        assert!(Idempotency::NotIdempotent { reason: "试" }.has_effects());
+    }
+
+    #[test]
+    fn 裁剪与鉴权用的是同一个判定() {
+        let spec = ToolSpec::builder("member.add")
+            .summary("加成员")
+            .input(Schema::new())
+            .requires(Requirement::InProject(Action::ManageMember))
+            .idempotency(Idempotency::Keyed)
+            .audits(xops_audit::kinds::MEMBER_ADDED)
+            .build()
+            .unwrap();
+        assert!(allows(&spec, Some(Role::Owner), false));
+        assert!(!allows(&spec, Some(Role::Member), false));
+        assert!(!allows(&spec, None, false), "不是成员就不该看见");
+        assert!(!allows(&spec, Some(Role::Owner), true), "归档项目里写不了");
+    }
+}

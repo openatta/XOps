@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use xops_core::{Actor, Error, Event, Id, Result, RowId, TableName, Timestamp, WriteOp};
-use xops_store::{Receipt, Store, WriteEngine, WriteRequest, keys, space};
+use xops_store::{
+    Column, Receipt, Relation, Relations, Select, Store, WriteEngine, WriteRequest, keys, space,
+};
 
 use crate::envelope::{AuditEnvelope, EventKind, Outcome, kinds};
 
@@ -18,9 +20,67 @@ pub const AUDIT_TABLE: &str = "_audit";
 /// 任何事件）是**可见性**要求，它必须在扫描之前就成立，而不是查完再筛——按项目前缀扫，
 /// 越权的行根本不进结果集。其余四个维度（类型、行为人、目标、时间细粒度）在这个前缀之内
 /// 过滤，那时候的集合已经是调用者本来就有权看的。
-const INDEX: &str = "audit-index";
-/// 平台级事件（不属于任何项目）在索引里的 scope。
-const PLATFORM_SCOPE: [u8; 16] = [0; 16];
+/// 审计的**关系投影**：一张真表，`project` · `at` · `kind` · `target` 上有真索引（`D60`）。
+///
+/// # 它取代了什么
+///
+/// 早先这里是一条**手写的键值二级索引**：键是 `scope|时刻|序号|表名`，值是空的。
+/// 那条索引能做的只有"按 scope 前缀扫、按时间排"——`kind` / `actor` / `target`
+/// 这几样筛选还是得把每一条记录从事件流里读出来再比。
+///
+/// **手写索引是在重新实现数据库已经做好的事**：自己维护、自己修、自己保证一致，
+/// 而换回来的能力还不如一条真索引。现在筛选全部发生在 SQL 里，
+/// **只有命中的那几条才会去事件流取内容**。
+///
+/// # 存的是指针，不是内容
+///
+/// 载荷只有 `(表, 序号)`。**事件流仍然是唯一的一份内容**——
+/// 这一层是索引，索引不该把被索引的东西再抄一遍。
+pub const AUDIT_RELATION: &str = "audit";
+
+/// 关系投影的列。
+fn audit_relation() -> Relation {
+    Relation {
+        name: AUDIT_RELATION.to_owned(),
+        columns: vec![
+            // 平台级事件这一列**是 NULL**，不是某个占位值——`IS NULL` 才查得干净。
+            Column::text("project", true),
+            Column::integer("at", true),
+            Column::text("kind", true),
+            Column::text("target", true),
+            // 平台级事件的可见性判定按它（`AUD-003`）。
+            Column::text("subject", true),
+            Column::text("actor", false),
+            // ⚠️ 排序键：`at` 与序号拼成定宽十六进制，**字典序即 (时刻, 序号) 序**。
+            // 单独一列是因为同一毫秒内的两条要有确定的先后——
+            // 光按 `at` 排，同刻的顺序就交给引擎决定了，而那在两个实现之间会漂。
+            Column::text("orderKey", true),
+        ],
+    }
+}
+
+/// 排序键：定宽十六进制拼接，**字典序即 `(at, seq)` 序**。
+fn order_key(at: Timestamp, seq: u64) -> String {
+    format!("{:016x}{seq:016x}", at.as_millis())
+}
+
+/// 一条记录的索引列。
+fn index_columns(record: &AuditRecord) -> serde_json::Value {
+    serde_json::json!({
+        "project": record.envelope.project.map(|id| id.to_string()),
+        "at": record.at.as_millis(),
+        "kind": record.envelope.kind.as_str(),
+        "target": record.envelope.target.to_string(),
+        "subject": record.envelope.subject.map(|id| id.to_string()),
+        "actor": serde_json::to_string(&record.actor).unwrap_or_default(),
+        "orderKey": order_key(record.at, record.seq),
+    })
+}
+
+/// 索引里存的**指针**：内容仍然只在事件流里有一份。
+fn index_pointer(record: &AuditRecord) -> serde_json::Value {
+    serde_json::json!({"table": record.table.as_str(), "seq": record.seq})
+}
 
 /// 一条审计记录：事件的那几样 + 信封里的那几样。
 #[derive(Debug, Clone, PartialEq)]
@@ -37,7 +97,10 @@ pub struct AuditRecord {
 }
 
 impl AuditRecord {
-    fn from_event(event: Event) -> Option<Self> {
+    /// 从一条事件解出一条审计记录。**不是信封就返回 `None`**——
+    /// 同一条事件流上并存着业务行与留痕，解不出来的那些不是错误。
+    #[must_use]
+    pub fn from_event(event: Event) -> Option<Self> {
         let envelope = AuditEnvelope::from_payload(&event.payload)?;
         Some(Self {
             id: event.id,
@@ -125,7 +188,14 @@ impl Query {
         self
     }
 
-    fn matches(&self, record: &AuditRecord) -> bool {
+    /// 一条记录合不合这次查询。
+    ///
+    /// ⚠️ **它是参考语义，不是查询路径。** 真正的筛选发生在 SQL 里
+    /// （见 [`AuditLog::query`]）——留着它是为了**有一个东西能与那份翻译对答案**：
+    /// 把筛选翻成 `WHERE` 是最容易漏一条、错一个边界的地方，
+    /// 而一份独立的、显然正确的实现就是最好的对照。验收里有一条逐条比对的测试。
+    #[must_use]
+    pub fn matches(&self, record: &AuditRecord) -> bool {
         if self.project != record.envelope.project {
             return false;
         }
@@ -170,6 +240,7 @@ impl Query {
 pub struct AuditLog {
     engine: Arc<WriteEngine>,
     store: Arc<dyn Store>,
+    relations: Arc<dyn Relations>,
     /// 哪些表的事件流上会出现审计信封。重建索引时要走一遍它们。
     watched: BTreeSet<TableName>,
 }
@@ -184,13 +255,19 @@ impl std::fmt::Debug for AuditLog {
 
 impl AuditLog {
     /// # Errors
-    /// `_audit` 这个表名不合法——只可能是常量被改坏了。
-    pub fn new(engine: Arc<WriteEngine>, store: Arc<dyn Store>) -> Result<Self> {
+    /// `_audit` 这个表名不合法（只可能是常量被改坏了）· 关系投影建不起来。
+    pub fn new(
+        engine: Arc<WriteEngine>,
+        store: Arc<dyn Store>,
+        relations: Arc<dyn Relations>,
+    ) -> Result<Self> {
+        relations.declare(&audit_relation())?;
         let mut watched = BTreeSet::new();
         watched.insert(TableName::new(AUDIT_TABLE)?);
         Ok(Self {
             engine,
             store,
+            relations,
             watched,
         })
     }
@@ -234,7 +311,12 @@ impl AuditLog {
             let Some(record) = AuditRecord::from_event(event.clone()) else {
                 continue;
             };
-            self.store.put(INDEX, &index_key(&record), &[])?;
+            self.relations.upsert(
+                AUDIT_RELATION,
+                RowId::from_id(record.id),
+                &index_columns(&record),
+                &index_pointer(&record),
+            )?;
         }
         Ok(())
     }
@@ -244,28 +326,48 @@ impl AuditLog {
     /// # Errors
     /// 底层不可用。
     pub fn query(&self, query: &Query) -> Result<Vec<AuditRecord>> {
-        let scope = scope_bytes(query.project);
-        let mut out = Vec::new();
-        let mut cursor: Option<Vec<u8>> = None;
-        loop {
-            let page = self.store.scan(INDEX, &scope, cursor.as_deref(), 256)?;
-            if page.is_empty() {
-                break;
+        // **筛选全部发生在 SQL 里**，只有命中的那几条才去事件流取内容。
+        let mut select = Select::new().oldest_first("orderKey").take(query.limit);
+        match query.project {
+            Some(project) => select = select.equal("project", project.to_string()),
+            None => {
+                // 平台级事件**只有主体本人读得到**（`AUD-003`）——
+                // 这一条现在是 WHERE 的一部分，不是取回来之后再过滤掉。
+                select = select
+                    .null("project")
+                    .equal("subject", query.viewer.to_string());
             }
-            cursor = page.last().map(|(key, _)| key.clone());
-            for (key, _) in page {
-                let Some((table, seq)) = decode_index_key(&key) else {
-                    continue;
-                };
-                let Some(record) = self.load(&table, seq)? else {
-                    continue;
-                };
-                if query.matches(&record) {
-                    out.push(record);
-                    if out.len() >= query.limit {
-                        return Ok(out);
-                    }
-                }
+        }
+        if let Some(kind) = &query.kind {
+            select = select.equal("kind", kind.as_str());
+        }
+        if let Some(target) = query.target {
+            select = select.equal("target", target.to_string());
+        }
+        if let Some(actor) = &query.actor {
+            select = select.equal(
+                "actor",
+                serde_json::to_string(actor)
+                    .map_err(|error| Error::internal(format!("actor 装不下：{error}")))?,
+            );
+        }
+        if let Some(since) = query.since {
+            select = select.no_earlier_than("at", since.as_millis());
+        }
+        if let Some(until) = query.until {
+            select = select.no_later_than("at", until.as_millis());
+        }
+
+        let mut out = Vec::new();
+        for (_, pointer) in self.relations.select(AUDIT_RELATION, &select)? {
+            let Some(table) = pointer.get("table").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(seq) = pointer.get("seq").and_then(Value::as_u64) else {
+                continue;
+            };
+            if let Some(record) = self.load(&TableName::new(table)?, seq)? {
+                out.push(record);
             }
         }
         Ok(out)
@@ -286,9 +388,7 @@ impl AuditLog {
     /// # Errors
     /// 底层不可用。
     pub fn rebuild_index(&self) -> Result<usize> {
-        for (key, _) in self.store.scan(INDEX, &[], None, usize::MAX)? {
-            self.store.delete(INDEX, &key)?;
-        }
+        self.relations.clear(AUDIT_RELATION)?;
         let mut rebuilt = 0;
         for table in &self.watched {
             let mut after = 0;
@@ -302,7 +402,12 @@ impl AuditLog {
                     let Some(record) = AuditRecord::from_event(event) else {
                         continue;
                     };
-                    self.store.put(INDEX, &index_key(&record), &[])?;
+                    self.relations.upsert(
+                        AUDIT_RELATION,
+                        RowId::from_id(record.id),
+                        &index_columns(&record),
+                        &index_pointer(&record),
+                    )?;
                     rebuilt += 1;
                 }
             }
@@ -338,7 +443,8 @@ impl AuditLog {
                 let Some(record) = AuditRecord::from_event(event) else {
                     continue;
                 };
-                self.store.delete(INDEX, &index_key(&record))?;
+                self.relations
+                    .remove(AUDIT_RELATION, RowId::from_id(record.id))?;
                 self.store
                     .delete(space::ROW, &keys::row(&record.table, record.row))?;
                 self.store
@@ -373,29 +479,6 @@ impl AuditLog {
             .map_err(|error| Error::internal(format!("事件读不回来：{error}")))?;
         Ok(AuditRecord::from_event(event))
     }
-}
-
-fn scope_bytes(project: Option<Id>) -> Vec<u8> {
-    project.map_or_else(|| PLATFORM_SCOPE.to_vec(), |id| id.as_bytes().to_vec())
-}
-
-fn index_key(record: &AuditRecord) -> Vec<u8> {
-    let mut key = scope_bytes(record.envelope.project);
-    // 时间在前、序号在后：同一 scope 内按时间升序，同刻内按序号定序。
-    key.extend_from_slice(&record.at.as_millis().to_be_bytes());
-    key.extend_from_slice(&record.seq.to_be_bytes());
-    key.extend_from_slice(record.table.as_str().as_bytes());
-    key
-}
-
-fn decode_index_key(key: &[u8]) -> Option<(TableName, u64)> {
-    const HEAD: usize = 16 + 8 + 8;
-    if key.len() <= HEAD {
-        return None;
-    }
-    let seq = u64::from_be_bytes(key[24..HEAD].try_into().ok()?);
-    let table = TableName::new(String::from_utf8(key[HEAD..].to_vec()).ok()?).ok()?;
-    Some((table, seq))
 }
 
 /// `Value` 的一个小便利：`AuditEnvelope` 之外的载荷。

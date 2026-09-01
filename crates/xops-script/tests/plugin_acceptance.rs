@@ -48,7 +48,9 @@ fn fixtures() -> Vec<Fixture> {
                 .with_pre_write(Arc::clone(&catalog) as Arc<dyn xops_store::PreWrite>)
                 .with_schema_check(Arc::clone(&catalog) as Arc<dyn xops_store::SchemaCheck>),
         );
-        let mut audit = AuditLog::new(Arc::clone(&engine), Arc::clone(&store)).unwrap();
+        let relations: Arc<dyn xops_store::Relations> =
+            Arc::new(xops_store::MemoryRelations::new());
+        let mut audit = AuditLog::new(Arc::clone(&engine), Arc::clone(&store), Arc::clone(&relations)).unwrap();
         for table in xops_identity::directory::platform_tables().unwrap() {
             audit = audit.watching(table);
         }

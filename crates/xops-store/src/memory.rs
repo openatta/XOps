@@ -218,6 +218,12 @@ fn matches(select: &Select, values: &Value) -> bool {
                 .and_then(Value::as_i64)
                 .is_some_and(|found| found <= *bound)
         })
+        && select.at_least.iter().all(|(column, bound)| {
+            values
+                .get(column)
+                .and_then(Value::as_i64)
+                .is_some_and(|found| found >= *bound)
+        })
 }
 
 /// 与 SQLite 的排序对齐：null 最小，然后数字，然后文本。

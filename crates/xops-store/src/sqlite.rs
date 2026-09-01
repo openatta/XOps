@@ -341,6 +341,11 @@ impl Relations for SqliteRelations {
             bound.push(rusqlite::types::Value::Integer(*bound_value));
             next += 1;
         }
+        for (column, bound_value) in &select.at_least {
+            clauses.push(format!("{column} >= ?{next}"));
+            bound.push(rusqlite::types::Value::Integer(*bound_value));
+            next += 1;
+        }
         let where_clause = if clauses.is_empty() {
             String::new()
         } else {

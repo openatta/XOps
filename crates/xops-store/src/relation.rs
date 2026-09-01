@@ -111,6 +111,18 @@ impl Relation {
     }
 }
 
+/// SQL 的保留字，**不能拿来当列名或表名**。
+///
+/// ⚠️ SQLite 对这些很宽容，**MySQL 不是**——`CREATE TABLE ... (table TEXT)` 在那边直接语法错。
+/// 目标库是 MySQL，所以这条也在声明这一刻挡住，不留到迁移那天。
+///
+/// 这不是一份完整的保留字表（那有几百个），是**最容易被当成业务列名的那些**。
+const RESERVED: [&str; 24] = [
+    "table", "index", "key", "order", "group", "select", "insert", "update", "delete", "from",
+    "where", "join", "union", "column", "primary", "foreign", "default", "check", "unique",
+    "values", "into", "and", "or", "not",
+];
+
 /// 名字要能安全地拼进 SQL 标识符的位置。
 ///
 /// ⚠️ **这不是"清洗输入"，是"只认一个白名单形状"。** 关系名与列名都来自代码里的
@@ -126,6 +138,12 @@ pub fn check_identifier(name: &str) -> Result<()> {
     if !shaped {
         return Err(Error::invalid(format!(
             "关系投影的名字要是小写字母开头、只含字母数字下划线：{name}"
+        )));
+    }
+    if RESERVED.contains(&name.to_ascii_lowercase().as_str()) {
+        return Err(Error::invalid(format!(
+            "{name} 是 SQL 保留字，当不了列名。\
+             SQLite 容得下，**MySQL 那边是语法错**——所以在这里就挡住"
         )));
     }
     Ok(())
@@ -148,6 +166,7 @@ pub enum Direction {
 /// is_null      "未读"                readAt 还没填
 /// is_not_null  "已经决定过的"        对称地留着，不留会立刻有人用 equals 凑
 /// at_most      "到期的那批"          retainUntil ≤ 现在（RET-005 整批按时间）
+/// at_least     "这个时刻之后的"      审计的时间区间查（AUD-008）
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Select {
@@ -155,6 +174,7 @@ pub struct Select {
     pub is_null: Vec<String>,
     pub is_not_null: Vec<String>,
     pub at_most: Vec<(String, i64)>,
+    pub at_least: Vec<(String, i64)>,
     pub order: Option<(String, Direction)>,
     /// 0 表示不限。
     pub limit: usize,
@@ -191,6 +211,18 @@ impl Select {
     }
 
     #[must_use]
+    pub fn no_earlier_than(mut self, column: &str, value: i64) -> Self {
+        self.at_least.push((column.to_owned(), value));
+        self
+    }
+
+    #[must_use]
+    pub fn oldest_first(mut self, column: &str) -> Self {
+        self.order = Some((column.to_owned(), Direction::Asc));
+        self
+    }
+
+    #[must_use]
     pub fn newest_first(mut self, column: &str) -> Self {
         self.order = Some((column.to_owned(), Direction::Desc));
         self
@@ -213,6 +245,7 @@ impl Select {
         referenced.extend(self.is_null.iter().map(String::as_str));
         referenced.extend(self.is_not_null.iter().map(String::as_str));
         referenced.extend(self.at_most.iter().map(|(column, _)| column.as_str()));
+        referenced.extend(self.at_least.iter().map(|(column, _)| column.as_str()));
         if let Some((column, _)) = &self.order {
             referenced.push(column);
         }
@@ -293,6 +326,10 @@ mod tests {
         assert!(check_identifier("read_at").is_ok());
         // 这些如果拼进 SQL 标识符的位置就麻烦了。
         assert!(check_identifier("createdAt").is_ok(), "驼峰的列名是合法的");
+        // 保留字：SQLite 容得下，MySQL 那边是语法错。
+        for reserved in ["table", "order", "key", "TABLE", "Index"] {
+            assert!(check_identifier(reserved).is_err(), "{reserved}");
+        }
         // 这些如果拼进 SQL 标识符的位置就麻烦了。
         for bad in [
             "",
@@ -335,12 +372,13 @@ mod tests {
     }
 
     #[test]
-    fn 四个算子都在() {
+    fn 五个算子都在() {
         let select = Select::new()
             .equal("user", "u1")
             .null("read_at")
             .not_null("created_at")
             .no_later_than("created_at", 100)
+            .no_earlier_than("created_at", 1)
             .newest_first("created_at")
             .take(50);
         assert!(select.check(&notices()).is_ok());

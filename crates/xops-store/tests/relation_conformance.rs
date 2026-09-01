@@ -219,6 +219,25 @@ fn 不大于遇到null是不匹配() {
 }
 
 #[test]
+fn 不小于是不大于的镜像() {
+    for (label, relations) in seeded() {
+        let recent = relations
+            .select("notices", &Select::new().no_earlier_than("created_at", 300))
+            .unwrap();
+        assert_eq!(recent.len(), 2, "{label}：300 与 400，边界算在内");
+        let window = relations
+            .select(
+                "notices",
+                &Select::new()
+                    .no_earlier_than("created_at", 200)
+                    .no_later_than("created_at", 300),
+            )
+            .unwrap();
+        assert_eq!(window.len(), 2, "{label}：两头夹出一个区间");
+    }
+}
+
+#[test]
 fn 非空是为空的镜像() {
     for (label, relations) in seeded() {
         let read = relations

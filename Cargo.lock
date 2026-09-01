@@ -1094,6 +1094,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "xops-template"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xops-audit",
+ "xops-core",
+ "xops-flow",
+ "xops-identity",
+ "xops-mcp",
+ "xops-repo",
+ "xops-script",
+ "xops-settle",
+ "xops-store",
+ "xops-table",
+]
+
+[[package]]
 name = "xops-web"
 version = "0.1.0"
 dependencies = [

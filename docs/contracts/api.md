@@ -427,3 +427,22 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - 把一条通知标记为已读。**只能改自己那一行、只能改 `readAt` 这一列**，
   且**照样追加事件**（`NTF-011`、`I-N`）。
 - 不是自己的那一条**与"不存在"完全一致**——不告诉调用方它存在。
+
+### Element: api:mcp.tool.template.list
+- module: xops-template
+- consumers: [agent]
+- 列出可用模板。项目成员。
+
+### Element: api:mcp.tool.template.show
+- module: xops-template
+- consumers: [agent]
+- 看一个模板要建什么：表 · 流程 · 插件（**含插件源码与能力声明**）。项目成员。
+
+### Element: api:mcp.tool.template.instantiate
+- module: xops-template
+- consumers: [agent]
+- 在本项目实例化：**建表、建流程、装插件一步完成**（`TPL-002`）。
+- **要维护者及以上**——里面有一步是装插件（`PLG-008`）。
+  **不为模板开一条更松的路。**
+- 撞名**明确失败，不覆盖**；中途失败会把这次已经建出来的表撤掉。
+- 实例化之后它们就是**普通的表、流程和插件**，想怎么改就怎么改（`TPL-004`）。

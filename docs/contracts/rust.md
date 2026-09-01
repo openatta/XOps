@@ -949,9 +949,14 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-flow#Definition
 - module: xops-flow
-- consumers: [RP-15, RP-18]
-- 一条流程的一个版本。**结算表放"谁对它做了什么表态"，主体表放"这件事本身"**（`FLW-005`）。
-- `activation_sets()` 是 D47 判定的单位：串行节点各自一个集合，**一个并行组整体是一个集合**。
+- consumers: [RP-15, RP-16, RP-18]
+- **新增 `status_columns`**：主体表上哪些列是状态列（`FLW-036`）。
+- 这是 RP-18 撞出来的一处缺口，按包文档说的办法补的：**缺的回头补那个包，
+  不在本包里补**。`FLW-036` 原文写的就是"**流程可以声明**主体表上的哪些列是状态列"，
+  而 `Definition` 里一直没有装它的地方——于是 `protection::check` 的 `status_columns`
+  参数没有来源，`I-P` 的后半句落不了地。
+- **状态列是流程声明的，不是表声明的**：同一张表在不同流程里可以有不同的状态列。
+- 校验：没有主体表就没有状态列可声明。
 
 ### Element: rust:xops-flow#Criteria
 - module: xops-flow
@@ -1194,3 +1199,30 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [xopsd]
 - `_notices` 自己的保留期：**平台级配置，默认 3 个月**，与任务无关（`RET-008`）。
   清理**整批按时间进行**（`RET-005`）。
+
+### Element: rust:xops-template#Template
+- module: xops-template
+- consumers: [RP-19]
+- 一个模板：**一套表 schema + 可选的流程定义 + 可选的插件**（`TPL-001`）。
+- ⚠️ **它是可序列化的声明式表示，不是硬编码在 Rust 里的结构体图。**
+  理由是 **Q15**（用户自定义模板的导出与提交，M6）：首版三个模板随平台发行，
+  但**表示形式要为导出留出可能**——硬编码的那种将来导不出来。
+  有一条 JSON 往返的测试盯着。
+
+### Element: rust:xops-template#Templates
+- module: xops-template
+- consumers: [xopsd, RP-19]
+- 列出 · 查看 · **在本项目实例化（建表、建流程、装插件一步完成）**。
+- **"中途失败不留下半套东西"靠预检，不靠事务**：存储契约只有基本增删改查
+  （`CON-012`），跨表事务这个东西不存在，所以这里不假装有——
+  ① 名字全部先查一遍，撞了就在动手之前失败；② 建表 → 装插件 → 建流程；
+  ③ 出错就把这次已经建出来的表软删掉。**③ 是尽力而为的**，撤不掉的会写在错误消息里。
+- 实例化整体上要**维护者及以上**：里面有一步是装插件（`PLG-008`）。
+  **不为模板开一条更松的路**——那等于绕过 `I-K`。
+
+### Element: rust:xops-template#catalog
+- module: xops-template
+- consumers: [RP-19]
+- 平台自带三个：**bugs · issues · approvals**（`TPL-003`、`TPL-008`）。
+- ⚠️ **approvals 的结算表列名直接决定 RP-19 那边的结果列映射**能不能拼出
+  `poll_approval` 的返回值——两包要一起看。

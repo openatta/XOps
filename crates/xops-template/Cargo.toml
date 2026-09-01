@@ -1,0 +1,23 @@
+[package]
+name = "xops-template"
+description = "模板：一套表 + 可选流程 + 可选插件，一步实例化。本包不新增任何机制。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+xops-table.workspace = true
+xops-flow.workspace = true
+xops-script.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-repo.workspace = true
+xops-settle.workspace = true

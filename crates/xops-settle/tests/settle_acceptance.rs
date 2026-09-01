@@ -166,6 +166,7 @@ fn scene(fixture: &Fixture, separation: bool) -> Scene {
                 settlement_table: TableId::user("approvals").unwrap(),
                 subject_table: Some(TableId::user("bugs").unwrap()),
                 start: Start::Explicit,
+                status_columns: vec![],
                 steps: vec![Step::Single {
                     node: Node {
                         name: "初审".into(),

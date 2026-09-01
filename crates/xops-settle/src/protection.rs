@@ -52,6 +52,27 @@ impl Origin {
     }
 }
 
+/// 校验一次写有没有碰这条流程声明的受保护列。
+///
+/// **状态列的名单从流程定义来**（`FLW-036`）——它是流程声明的，不是表声明的：
+/// 同一张表在不同流程里可以有不同的状态列。
+///
+/// # Errors
+/// 碰了。
+pub fn check_for(
+    definition: &xops_flow::Definition,
+    origin: Origin,
+    values: &Value,
+    platform_filled_instance: bool,
+) -> Result<()> {
+    check(
+        origin,
+        &definition.status_columns,
+        values,
+        platform_filled_instance,
+    )
+}
+
 /// 校验一次写有没有碰受保护的列。
 ///
 /// # Errors
@@ -135,5 +156,33 @@ mod tests {
             "插件不写表，是平台代写"
         );
         assert!(Origin::of(&plugin).may_write_status());
+    }
+
+    #[test]
+    fn 状态列的名单从流程定义来() {
+        let mut definition = xops_flow::Definition {
+            flow: xops_flow::FlowId::generate(),
+            project: xops_identity::ProjectId::generate(),
+            version: 1,
+            name: "缺陷流转".into(),
+            settlement_table: xops_table::table::TableId::user("bug-events").unwrap(),
+            subject_table: Some(xops_table::table::TableId::user("bugs").unwrap()),
+            start: xops_flow::definition::Start::Automatic,
+            status_columns: vec!["status".into()],
+            steps: vec![],
+            state: xops_flow::definition::State::Published,
+            created_by: xops_identity::UserId::generate(),
+            created_at: xops_core::Timestamp::from_millis(0),
+        };
+        let write = json!({"status": "已关闭"});
+        assert!(
+            check_for(&definition, Origin::User, &write, false).is_err(),
+            "FLW-036：任何成员都能直接改状态的话，整条流程就白搭了"
+        );
+        assert!(check_for(&definition, Origin::Platform, &write, false).is_ok());
+
+        // **同一张表在别的流程里可以不是状态列** —— 名单是流程声明的。
+        definition.status_columns.clear();
+        assert!(check_for(&definition, Origin::User, &write, false).is_ok());
     }
 }

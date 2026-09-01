@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo", "crates/xops-skill", "crates/xops-task", "crates/xops-dispatch", "crates/xops-flow", "crates/xops-settle", "crates/xops-script", "crates/xops-notice"]
+members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo", "crates/xops-skill", "crates/xops-task", "crates/xops-dispatch", "crates/xops-flow", "crates/xops-settle", "crates/xops-script", "crates/xops-notice", "crates/xops-template"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,11 +18,13 @@ xops-table = { path = "crates/xops-table" }
 xops-read = { path = "crates/xops-read" }
 xops-exec = { path = "crates/xops-exec" }
 xops-repo = { path = "crates/xops-repo" }
+xops-settle = { path = "crates/xops-settle" }
 xops-skill = { path = "crates/xops-skill" }
 xops-task = { path = "crates/xops-task" }
 xops-flow = { path = "crates/xops-flow" }
 xops-script = { path = "crates/xops-script" }
 xops-notice = { path = "crates/xops-notice" }
+xops-template = { path = "crates/xops-template" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # rusqlite 只允许出现在 xops-store 里。CON-012 的分界线就在这一行 ——

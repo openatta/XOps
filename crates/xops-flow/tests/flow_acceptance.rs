@@ -146,6 +146,7 @@ impl Fixture {
             settlement_table: TableId::user("approvals").unwrap(),
             subject_table: Some(TableId::user("bugs").unwrap()),
             start: Start::Explicit,
+            status_columns: vec![],
             steps,
             state: State::Published,
             created_by: actor,

@@ -58,7 +58,15 @@ pub fn validate(definition: &Definition) -> Result<Vec<Finding>> {
         });
     }
 
-    // ③ 筛选不得重叠。
+    // ③ 状态列长在主体表上 —— 没有主体表就没有状态列可声明（`FLW-036`）。
+    if !definition.status_columns.is_empty() && definition.subject_table.is_none() {
+        findings.push(Finding {
+            rule: "FLW-036",
+            detail: "声明了状态列，却没有主体表——状态列是主体表上的列".into(),
+        });
+    }
+
+    // ④ 筛选不得重叠。
     let sets = definition.activation_sets();
     for (index, set) in sets.iter().enumerate() {
         // 同一集合内两两。
@@ -175,6 +183,7 @@ mod tests {
             settlement_table: TableId::user("approvals").unwrap(),
             subject_table: Some(TableId::user("bugs").unwrap()),
             start: Start::Explicit,
+            status_columns: vec![],
             steps,
             state: State::Published,
             created_by: UserId::generate(),
@@ -325,5 +334,26 @@ mod tests {
         let mut broken = definition(vec![]);
         broken.steps.clear();
         assert!(validate(&broken).is_err());
+    }
+
+    #[test]
+    fn 没有主体表就没有状态列可声明() {
+        let mut definition = definition(vec![Step::Single {
+            node: node("批", equals("d", "同意")),
+        }]);
+        definition.status_columns = vec!["status".into()];
+        definition.subject_table = None;
+        let findings = validate(&definition).unwrap();
+        assert!(
+            findings.iter().any(|finding| finding.rule == "FLW-036"),
+            "状态列是主体表上的列"
+        );
+        definition.subject_table = Some(TableId::user("bugs").unwrap());
+        assert!(
+            !validate(&definition)
+                .unwrap()
+                .iter()
+                .any(|finding| finding.rule == "FLW-036")
+        );
     }
 }

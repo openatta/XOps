@@ -231,6 +231,17 @@ pub struct Definition {
     /// 主体表：**放"这件事本身"**。可选。
     pub subject_table: Option<TableId>,
     pub start: Start,
+    /// **主体表上哪些列是状态列**（`FLW-036`）。
+    ///
+    /// > 状态列**只有平台与流转插件能写，用户的 update 写不了它**（`I-P`）。
+    ///
+    /// 不这么做，任何成员都能直接 `update bugs.status = closed` 绕过整条流程——
+    /// **七条判定只管「这行算不算结算」，从不阻止写入**。
+    ///
+    /// ⚠️ 它是**流程声明的**，不是表声明的：同一张表在不同流程里可以有不同的状态列。
+    /// 判定由 `xops_settle::protection::check` 做，名单从这里来。
+    #[serde(default)]
+    pub status_columns: Vec<String>,
     pub steps: Vec<Step>,
     pub state: State,
     pub created_by: UserId,

@@ -535,12 +535,11 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-web#ROUTES
 - module: xops-web
-- consumers: [RP-06, RP-13]
-- **路由是一张可枚举的常量表，不是散在代码里的一堆 match 分支。**
-- 本次加了 `POST /webhooks/git`，`Kind::Webhook`。**非 GET 的路由现在恰好三条**：
-  两条凭据面 + 一条 webhook，**全部 `writes_business_objects: false`**——
-  它们就是 `MCP-013` 认下的那几个例外，而这张表是它们的清单。
-- ⚠️ 再往这张表里加非 GET 路由，先回去读 `MCP-013`：**例外只有四个**。
+- consumers: [xops-web 的测试]
+- 全部路由,**多一条写路由都不行**。`BRD-005` 第 ① 道由枚举这张表来证明。
+- **新增 `GET /healthz`**:存活探针。**不认证、不查库、回话里没有任何信息**——
+  版本、项目数、库路径一律不给。⚠️ 它**不是 `MCP-013` 的第五个例外**:
+  例外说的是"能写点什么的非 MCP 入口",而它连读都不读。
 
 ### Element: rust:xops-web#Sessions
 - module: xops-web
@@ -1456,3 +1455,30 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [测试]
 - 从一条事件解出一条审计记录。**不是信封就返回 `None`**——
   同一条事件流上并存着业务行与留痕，解不出来的那些不是错误。
+
+### Element: rust:xops-core#log
+- module: xops-core
+- consumers: [全部]
+- 一层薄的结构化日志:级别 + 事件名 + 键值对。
+- ⚠️ **不是格式化字符串,这是有意的**:`format!("调了 {name},参数 {args:?}")`
+  这种写法迟早会有人把带令牌的东西插进去——`token.issue` 的回话里有令牌原文,
+  插件配置的值是凭据,派工单里有仓库凭据。
+  **键值对让"要记什么"是一次显式选择,格式化字符串让它成了一次顺手。**
+- `redact` 把长得像凭据的值换掉。⚠️ **它是一张网,不是一个保证**——
+  没有前缀的随机串它认不出来,**规矩仍然是不要把密文传进来**。有测试把这句话钉住。
+- `XOPS_LOG` 不认识的值当 `info`,**不当 `off`**:一个拼错的环境变量把日志静默关掉,
+  是出了事之后最难查的那种情形。
+- 不引日志库:这一层要的就是级别、事件名、键值、时刻四样,
+  换回 subscriber / span / 字段类型系统不值。
+
+### Element: rust:xops-mcp#transport::http::serve_listener_until
+- module: xops-mcp
+- consumers: [xopsd]
+- `stop` 置起就不再接新连接并返回。
+- ⚠️ **它只停止 accept,不打断在途请求**——那些在各自的线程上跑完。
+  "优雅"到此为止:调用方要给一个收尾窗口。
+
+### Element: rust:xops-web#WebServer::serve_listener_until
+- module: xops-web
+- consumers: [xopsd]
+- 同上。

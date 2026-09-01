@@ -17,7 +17,7 @@ use crate::config::Config;
 #[must_use]
 pub fn render(config: &Config, assembled: &Assembled) -> String {
     let mut out = String::new();
-    out.push_str("XOps\n");
+    out.push_str(&format!("XOps {}\n", env!("CARGO_PKG_VERSION")));
     out.push_str(&format!(
         "  存储      {}\n",
         if config.in_memory() {
@@ -31,6 +31,11 @@ pub fn render(config: &Config, assembled: &Assembled) -> String {
     out.push_str(&format!(
         "  tool        {} 个\n",
         assembled.mcp.registry().len()
+    ));
+    out.push_str(&format!(
+        "  日志        {:?}（{}）\n",
+        xops_core::log::level(),
+        xops_core::log::LEVEL_ENV
     ));
 
     if assembled.engine_kind == "stub" {
@@ -70,6 +75,7 @@ mod tests {
         };
         let assembled = crate::assemble(&config).unwrap();
         let banner = render(&config, &assembled);
+        assert!(banner.contains(env!("CARGO_PKG_VERSION")), "横幅要带版本号");
         assert!(banner.contains("桩"), "引擎是桩这件事要说出来");
         assert!(banner.contains("裸跑"), "D58 的代价要说出来");
         assert!(banner.contains("出网后端没接"));

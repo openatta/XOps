@@ -6,6 +6,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use serde_json::{Value, json};
@@ -39,6 +40,19 @@ fn serve_web(assembled: &Assembled) -> u16 {
         let _ = server.serve_listener(&listener);
     });
     port
+}
+
+/// 起一个可停的 Web 面，返回 `(端口, 停止开关, 线程)`。
+fn serve_web_stoppable(assembled: &Assembled) -> (u16, Arc<AtomicBool>, thread::JoinHandle<()>) {
+    let listener = xops_web::server::listen("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = Arc::clone(&assembled.web);
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let handle = thread::spawn(move || {
+        let _ = server.serve_listener_until(&listener, &flag);
+    });
+    (port, stop, handle)
 }
 
 fn http(port: u16, request: &str) -> String {
@@ -255,4 +269,83 @@ fn 装配之后web的写路由还是只有那三条例外() {
 /// 让 `Value` 在这个文件里有个用处。
 fn _unused(value: &Value) -> bool {
     value.is_null()
+}
+
+// ——————————————————————————————— 出版本要的那几样 ———————————————————————————————
+
+#[test]
+fn 存活探针不认证不泄露() {
+    let assembled = assemble(&config()).unwrap();
+    let web = serve_web(&assembled);
+    // **不带任何凭据**——探针是给编排器用的，它没有令牌也没有会话。
+    let response = http(
+        web,
+        "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let body = body_of(&response);
+    assert_eq!(body, r#"{"status":"ok"}"#);
+
+    // ⚠️ **回话里不能有任何信息。** 版本、项目数、连接数、库路径——
+    // 一个未认证的端点泄露的每一样都是给人探的。
+    for leak in [
+        env!("CARGO_PKG_VERSION"),
+        "stub",
+        "sqlite",
+        "memory",
+        "project",
+        "tool",
+    ] {
+        assert!(!body.contains(leak), "探针泄露了 {leak}：{body}");
+    }
+}
+
+#[test]
+fn 探针不是第五个非mcp例外() {
+    // `MCP-013` 认下的例外说的是"能写点什么的非 MCP 入口"。
+    // 探针连读都不读——**它不该被算进那张表**，否则那张表就开始收留无关的东西了。
+    assert_eq!(xops_mcp::boundary::NON_MCP_ENTRYPOINTS.len(), 4);
+    let health = xops_web::routes::ROUTES
+        .iter()
+        .find(|route| route.path == "/healthz")
+        .expect("探针要在路由表里");
+    assert_eq!(health.method, "GET");
+    assert!(!health.writes_business_objects);
+}
+
+#[test]
+fn 置起停止开关之后不再接新连接() {
+    let assembled = assemble(&config()).unwrap();
+    let (port, stop, handle) = serve_web_stoppable(&assembled);
+
+    // 停之前：连得上。
+    assert!(
+        http(
+            port,
+            "GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+        )
+        .starts_with("HTTP/1.1 200")
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    // accept 是轮询的，给它一点反应时间。
+    handle.join().expect("停止开关一置起，服务循环就该返回");
+
+    // 停之后：连不上了（端口已经关掉）。
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).is_err(),
+        "停机之后监听器该关掉"
+    );
+}
+
+#[test]
+fn 日志级别关得掉而且不认识的值不会把日志关掉() {
+    // ⚠️ 一个拼错的 `XOPS_LOG` 把日志静默关掉，是出了事之后最难查的那种情形。
+    use xops_core::log::Level;
+    assert_eq!(Level::parse("off"), Level::Off);
+    assert_eq!(
+        Level::parse("胡说"),
+        Level::Info,
+        "不认识的当 info，不是 off"
+    );
 }

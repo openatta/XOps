@@ -40,6 +40,9 @@ sha2 = "0.10"
 chacha20poly1305 = "0.10"
 # 插件载体（D52）：一次调用一个 runtime，默认零宿主绑定。
 rquickjs = { version = "0.12", features = ["bindgen"] }
+# 只给 xopsd 用：捕 SIGTERM / SIGINT。
+# std 里没有信号 API，而自己写要 `unsafe`，那是 forbid 的 —— 所以引一个。
+signal-hook = "0.3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

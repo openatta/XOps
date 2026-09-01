@@ -10,9 +10,10 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
-use xops_core::{Error, Result};
+use xops_core::{Error, Result, log};
 
 use crate::McpServer;
 
@@ -22,6 +23,8 @@ pub const PATH: &str = "/mcp";
 pub const MAX_BODY: usize = 4 * 1024 * 1024;
 /// 请求头上限。
 const MAX_HEADER_BYTES: usize = 16 * 1024;
+/// 没有新连接时歇多久再看一眼。**它决定停机的反应时间上限。**
+const ACCEPT_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// 监听并一直服务下去。
 ///
@@ -34,7 +37,10 @@ pub fn serve(server: Arc<McpServer>, address: impl ToSocketAddrs) -> Result<()> 
         let server = Arc::clone(&server);
         // 一连接一线程。单实例部署下，连接数的量级是"几个 agent 客户端"。
         thread::spawn(move || {
-            let _ = handle_connection(&server, stream);
+            if let Err(error) = handle_connection(&server, stream) {
+                // 早先这里是 `let _ =` —— **出了事什么也看不到**。
+                log::warn("mcp.connection", &[("error", &format!("{error}"))]);
+            }
         });
     }
     Ok(())
@@ -48,17 +54,54 @@ pub fn listen(address: impl ToSocketAddrs) -> Result<TcpListener> {
     TcpListener::bind(address).map_err(|error| Error::unavailable(format!("监听失败：{error}")))
 }
 
-/// 服务一个已经绑好的监听器。
+/// 服务一个已经绑好的监听器，**一直服务下去**。
 ///
 /// # Errors
 /// 不会返回，除非监听器坏了。
 pub fn serve_listener(server: Arc<McpServer>, listener: &TcpListener) -> Result<()> {
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let server = Arc::clone(&server);
-        thread::spawn(move || {
-            let _ = handle_connection(&server, stream);
-        });
+    static NEVER: AtomicBool = AtomicBool::new(false);
+    serve_listener_until(server, listener, &NEVER)
+}
+
+/// 同上，但 `stop` 一旦置起就**不再接新连接**并返回。
+///
+/// ⚠️ **它只停止 accept，不打断在途请求**——那些在各自的线程上跑完。
+/// "优雅"到此为止：调用方要给一个收尾窗口。
+///
+/// 实现上把监听器设成非阻塞再轮询：`accept` 阻塞时没有别的办法把它叫醒，
+/// 而"为了叫醒它去给自己发一个连接"是更难懂的做法。
+///
+/// # Errors
+/// 监听器坏了。
+pub fn serve_listener_until(
+    server: Arc<McpServer>,
+    listener: &TcpListener,
+    stop: &AtomicBool,
+) -> Result<()> {
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| Error::unavailable(format!("监听器设不成非阻塞：{error}")))?;
+    while !stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                // ⚠️ **接下来的这条连接要设回阻塞**：非阻塞是从监听器继承的，
+                // 带着它去读请求会读到一半就 `WouldBlock`。
+                if stream.set_nonblocking(false).is_err() {
+                    continue;
+                }
+                let server = Arc::clone(&server);
+                thread::spawn(move || {
+                    if let Err(error) = handle_connection(&server, stream) {
+                        // 早先这里是 `let _ =` —— **出了事什么也看不到**。
+                        log::warn("mcp.connection", &[("error", &format!("{error}"))]);
+                    }
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(ACCEPT_POLL);
+            }
+            Err(_) => continue,
+        }
     }
     Ok(())
 }
@@ -161,7 +204,40 @@ fn dispatch(server: &McpServer, request: &Request) -> String {
             .to_string(),
         );
     };
-    match server.handle(request.credential.as_deref(), &payload) {
+    let started = std::time::Instant::now();
+    let outcome = server.handle(request.credential.as_deref(), &payload);
+
+    // ⚠️ **记的是方法、tool 名、结果、耗时——不是参数。**
+    // 参数里有令牌原文（`token.issue` 的回话）、有插件配置的值、有派工单里的仓库凭据。
+    // 把它们记下来等于把凭据落到磁盘上，而日志通常比数据库更容易被拿到。
+    let method = payload
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("?");
+    let tool = payload
+        .get("params")
+        .and_then(|params| params.get("name"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let failed = outcome
+        .as_ref()
+        .and_then(|value| value.get("error"))
+        .and_then(|error| error.get("code"))
+        .map(|code| code.to_string());
+    let millis = started.elapsed().as_millis().to_string();
+    let mut fields = vec![("method", method), ("millis", millis.as_str())];
+    if !tool.is_empty() {
+        fields.push(("tool", tool));
+    }
+    match &failed {
+        Some(code) => {
+            fields.push(("error", code.as_str()));
+            log::info("mcp.call", &fields);
+        }
+        None => log::debug("mcp.call", &fields),
+    }
+
+    match outcome {
         Some(value) => response(200, &value.to_string()),
         // 通知没有响应体。
         None => response(202, ""),

@@ -10,7 +10,11 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+
+/// 没有新连接时歇多久再看一眼。**它决定停机的反应时间上限。**
+const ACCEPT_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 use serde_json::{Value, json};
 use xops_core::{Error, Id, Result, RowId};
@@ -133,6 +137,27 @@ impl WebServer {
     /// 处理一次请求。**没有传输，因而整段可以直接测。**
     #[must_use]
     pub fn handle(&self, request: &Request) -> Response {
+        let started = std::time::Instant::now();
+        let response = self.handle_inner(request);
+        // ⚠️ **记路径与状态，不记会话 cookie、不记回话内容。**
+        // 路径里有项目与行的标识，那些是指针不是内容。
+        let millis = started.elapsed().as_millis().to_string();
+        let status = response.status.to_string();
+        let fields = [
+            ("method", request.method.as_str()),
+            ("path", request.path.as_str()),
+            ("status", status.as_str()),
+            ("millis", millis.as_str()),
+        ];
+        if response.status >= 500 {
+            xops_core::log::error("web.request", &fields);
+        } else {
+            xops_core::log::debug("web.request", &fields);
+        }
+        response
+    }
+
+    fn handle_inner(&self, request: &Request) -> Response {
         match self.dispatch(request) {
             Ok(response) => response,
             Err(error) => {
@@ -152,6 +177,15 @@ impl WebServer {
             // 没命中 API 路由就交给静态资源（前端是个 SPA，深链要回落到 index.html）。
             return Ok(self.assets.serve(&request.method, &request.path));
         };
+        if route.kind == Kind::Health {
+            // **不查库、不认证、不带任何信息。** 探针只回答"进程还在"。
+            return Ok(Response {
+                status: 200,
+                content_type: "application/json; charset=utf-8",
+                body: br#"{"status":"ok"}"#.to_vec(),
+                set_session: None,
+            });
+        }
         if route.kind == Kind::Credential {
             return self.session_face(request);
         }
@@ -276,12 +310,46 @@ impl WebServer {
     /// # Errors
     /// 监听器坏了。
     pub fn serve_listener(self: &Arc<Self>, listener: &TcpListener) -> Result<()> {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { continue };
-            let server = Arc::clone(self);
-            thread::spawn(move || {
-                let _ = server.handle_connection(stream);
-            });
+        static NEVER: AtomicBool = AtomicBool::new(false);
+        self.serve_listener_until(listener, &NEVER)
+    }
+
+    /// 同上，但 `stop` 一旦置起就**不再接新连接**并返回。
+    ///
+    /// ⚠️ **它只停止 accept，不打断在途请求**——那些在各自的线程上跑完。
+    ///
+    /// # Errors
+    /// 监听器坏了。
+    pub fn serve_listener_until(
+        self: &Arc<Self>,
+        listener: &TcpListener,
+        stop: &AtomicBool,
+    ) -> Result<()> {
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| Error::unavailable(format!("监听器设不成非阻塞：{error}")))?;
+        while !stop.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    // **设回阻塞**：非阻塞是从监听器继承的，带着它读请求会读一半就断。
+                    if stream.set_nonblocking(false).is_err() {
+                        continue;
+                    }
+                    let server = Arc::clone(self);
+                    thread::spawn(move || {
+                        if let Err(error) = server.handle_connection(stream) {
+                            xops_core::log::warn(
+                                "web.connection",
+                                &[("error", &format!("{error}"))],
+                            );
+                        }
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(ACCEPT_POLL);
+                }
+                Err(_) => continue,
+            }
         }
         Ok(())
     }

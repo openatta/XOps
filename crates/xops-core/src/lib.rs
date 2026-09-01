@@ -9,6 +9,7 @@
 pub mod error;
 pub mod event;
 pub mod id;
+pub mod log;
 pub mod role;
 pub mod time;
 

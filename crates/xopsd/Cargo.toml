@@ -35,6 +35,7 @@ xops-notice.workspace = true
 xops-template.workspace = true
 xops-xforge.workspace = true
 serde_json.workspace = true
+signal-hook.workspace = true
 
 [lints]
 workspace = true

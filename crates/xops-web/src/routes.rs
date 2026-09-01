@@ -13,6 +13,11 @@
 pub enum Kind {
     /// 只读。
     Read,
+    /// **存活探针**：不认证、不读任何数据、什么也不泄露。
+    ///
+    /// ⚠️ 它**不是 `MCP-013` 的第五个例外**——例外说的是"能写点什么的非 MCP 入口"，
+    /// 而这条连读都不读：它只回答"这个进程还在不在"。
+    Health,
     /// **凭据类**：建立或销毁会话。`MCP-013` 认下的四个例外之一，
     /// **不写任何项目内的业务对象**。
     Credential,
@@ -36,7 +41,15 @@ pub struct Route {
 }
 
 /// 全部路由。**多一条写路由都不行。**
-pub const ROUTES: [Route; 10] = [
+pub const ROUTES: [Route; 11] = [
+    Route {
+        method: "GET",
+        path: "/healthz",
+        kind: Kind::Health,
+        writes_business_objects: false,
+        summary: "存活探针。**不认证、不查库、回话里没有任何信息**——\
+                  版本、项目数、连接数一律不给：探针是给编排器看的，不是给人探的",
+    },
     Route {
         method: "GET",
         path: "/api/me",

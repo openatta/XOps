@@ -352,10 +352,10 @@ fn 日志级别关得掉而且不认识的值不会把日志关掉() {
 
 /// **子模块是只读的。** 这条测试盯着一件真出过事的事。
 ///
-/// `vendor/attacore` 是上游的仓，改那边的代码是明令禁止的:改动会被上游清理掉，
+/// `vendor/attacore` 是上游的仓，改那边的代码是明令禁止的：改动会被上游清理掉，
 /// **而一次被清理掉的修改是查不出来的**。
 ///
-/// ⚠️ 已经踩过一次:`cargo fmt --all` 顺着 path 依赖走进了子模块，
+/// ⚠️ 已经踩过一次：`cargo fmt --all` 顺着 path 依赖走进了子模块，
 /// **一次格式化了 75 个文件**。`[workspace] exclude` 拦不住它——那张表是给
 /// 依赖解析看的，不是给 rustfmt 看的。所以格式化要走 `scripts/fmt.sh`。
 #[test]
@@ -366,7 +366,7 @@ fn 子模块没有被改过() {
         .current_dir(root.join("vendor/attacore"))
         .output();
     let Ok(output) = output else {
-        // 没有 git 或者子模块没拉下来:这条测试没什么可说的，不该因此变红。
+        // 没有 git 或者子模块没拉下来：这条测试没什么可说的，不该因此变红。
         return;
     };
     let dirty = String::from_utf8_lossy(&output.stdout);
@@ -374,5 +374,116 @@ fn 子模块没有被改过() {
         dirty.trim().is_empty(),
         "vendor/attacore 被改过了。**那个仓只读**——需求变更走 ISSUE 提过去。\n\
          格式化用 `./scripts/fmt.sh`，不要用 `cargo fmt --all`。\n{dirty}"
+    );
+}
+
+/// **每一条接缝都要在装配层被填上。**
+///
+/// # 为什么要有这条测试
+///
+/// 这个仓里每个单元自己都是对的、单元测试也绿，而好几条链**从来没有谁调用**:
+/// 流程求值、定时触发、webhook、落账、保留期、实例过期——**六条**。
+/// 表现全是"功能整个不工作，而且是静默的"。
+///
+/// ⚠️ **单元测试证明不了这件事**:它构造被测对象、注入桩、断言行为——
+/// 那恰恰跳过了"这个对象在成品里被接上了吗"。**装配层是唯一知道全貌的地方**，
+/// 而它是最后写的，几条线就那么留在了半空中。
+///
+/// 这条测试枚举全仓的"注入位"型接缝，断言每一个在 `assemble.rs` 里都有着落。
+#[test]
+fn 每一条注入位都在装配层被填上() {
+    let assemble = include_str!("../src/assemble.rs");
+    let background = include_str!("../src/background.rs");
+    let wired = format!("{assemble}\n{background}");
+
+    // (接缝, 在装配层该出现的那个标记, 没接的后果)
+    let seams = [
+        (
+            "PreWrite / SchemaCheck",
+            "with_pre_write",
+            "schema 不校验、序号不补齐",
+        ),
+        (
+            "Evaluate（流程求值）",
+            "with_evaluate",
+            "**整个流程引擎惰性**：行写进结算表，没有任何东西去求值",
+        ),
+        (
+            "PluginEvaluator（流转插件）",
+            "with_plugins",
+            "指定了流转插件的节点求不了值",
+        ),
+        (
+            "NotSettledNotifier（未被采纳）",
+            "NotSettled",
+            "写的人不知道自己白写了（FLW-027）",
+        ),
+        (
+            "TestRunner（发起测试执行）",
+            "with_test_runner",
+            "**技能发布不了**：发布要测试执行，而它没有入口",
+        ),
+        (
+            "SubscriptionCheck（订阅白名单）",
+            "with_subscription_check",
+            "订阅声明不校验",
+        ),
+        (
+            "WorkspaceSource / Repos",
+            "GitPlatform",
+            "要读代码仓的技能跑不了",
+        ),
+        (
+            "WebhookSink（Git webhook）",
+            "with_webhooks",
+            "**webhook 事件掉进地里**：路由在、验签在，什么也不发生",
+        ),
+        (
+            "RunNotifier（执行结束通知）",
+            "with_notices",
+            "执行完了没人知道（NTF-007）",
+        ),
+        (
+            "Reaper（落账）",
+            "Reaper::new",
+            "**执行成功了，`_runs` 上什么也没有**",
+        ),
+        (
+            "Ticker（定时触发）",
+            "Ticker::new",
+            "**定时任务永远不触发**：配置在那儿，时间也对，什么都不发生",
+        ),
+        (
+            "Keeper（保留期）",
+            "Keeper::new",
+            "保留期从不生效，库只涨不减",
+        ),
+        (
+            "expire_due（实例过期）",
+            "expire_due",
+            "实例永不过期（FLW-017）",
+        ),
+        (
+            "Concurrency（并发上限）",
+            "with_concurrency",
+            "**一个项目能把算力吃光**（EXE-027）",
+        ),
+        (
+            "关系投影的开机重放",
+            "rebuild_index",
+            "**存量库升上来时投影是空的**：审计查不到、按主体找不到",
+        ),
+    ];
+
+    let mut missing = Vec::new();
+    for (seam, marker, consequence) in seams {
+        if !wired.contains(marker) {
+            missing.push(format!("  {seam}（找不到 `{marker}`）→ {consequence}"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "这些接缝在装配层没有着落——**每一条都是「功能整个不工作」且静默**：\n{}",
+        missing.join("\n")
     );
 }

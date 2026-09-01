@@ -11,6 +11,7 @@
 //! ```
 
 pub mod assemble;
+pub mod background;
 pub mod banner;
 pub mod config;
 

@@ -9,8 +9,9 @@
 //!         —— 一个静默被跳过的任务，会让人以为它在跑
 //! ```
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use xops_audit::{AuditEnvelope, AuditLog};
@@ -45,7 +46,8 @@ pub enum Outcome {
     Accepted { run: String },
     /// 被拒绝：任务不存在 / 已停用 / 不允许这种触发方式（`TRG-008`）。
     Rejected { why: String },
-    /// 被重叠策略跳过（`TSK-008`）。
+    /// 这一次不提交：重叠策略（`TSK-008`）或并发已满（`EXE-027`）。
+    /// **任务本身没问题**——这是它与 `Rejected` 的分界。
     Skipped { why: String },
     /// 同一个外部事件已经产生过一次执行（`TRG-013`）。
     Duplicate { run: String },
@@ -73,6 +75,66 @@ pub struct Dispatcher {
     clock: Arc<dyn Clock>,
     /// 需要代码仓时，工作区从哪来。**没接就等于"不提供"**（`I-I`）。
     workspaces: Option<Arc<dyn WorkspaceSource>>,
+    /// 并发名额（`EXE-027`）。**没接就等于不限**——所以装配层必须接。
+    slots: Option<Arc<Slots>>,
+}
+
+/// 名额的持有处。
+///
+/// `Permit` 是析构即归还的，可这里没有一个"跟着这次执行活着"的对象可以放它:
+/// 提交是非阻塞的，跑完由 [`Reaper`] 在另一轮里发现。
+/// 所以名额按 run 存着，**落账的那一刻还回去**——
+/// 归还点和"这次执行结束了"是同一件事，不会各算各的。
+pub struct Slots {
+    concurrency: Arc<xops_task::Concurrency>,
+    held: Mutex<HashMap<String, xops_task::Permit>>,
+}
+
+impl std::fmt::Debug for Slots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Slots")
+            .field(
+                "held",
+                &self.held.lock().map(|held| held.len()).unwrap_or(0),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl Slots {
+    #[must_use]
+    pub fn new(concurrency: Arc<xops_task::Concurrency>) -> Self {
+        Self {
+            concurrency,
+            held: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn take(&self, project: xops_identity::ProjectId) -> Option<xops_task::Permit> {
+        self.concurrency.acquire(project)
+    }
+
+    /// 名额跟着这个 run 存起来。
+    fn keep(&self, run: &str, permit: xops_task::Permit) {
+        self.locked().insert(run.to_owned(), permit);
+    }
+
+    /// 还回去。**没有这一条就等于上限只减不增**——第一批跑完之后平台就再也接不了活。
+    fn give_back(&self, run: &str) {
+        self.locked().remove(run);
+    }
+
+    /// 此刻占着几个名额。
+    #[must_use]
+    pub fn in_flight(&self) -> usize {
+        self.concurrency.in_flight()
+    }
+
+    fn locked(&self) -> std::sync::MutexGuard<'_, HashMap<String, xops_task::Permit>> {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 /// 「按修订备一份只读工作区」的注入位。RP-08 填它。
@@ -112,7 +174,15 @@ impl Dispatcher {
             store,
             clock,
             workspaces: None,
+            slots: None,
         }
+    }
+
+    /// 接上并发名额（`EXE-027`）。
+    #[must_use]
+    pub fn with_concurrency(mut self, slots: Arc<Slots>) -> Self {
+        self.slots = Some(slots);
+        self
     }
 
     /// 接上工作区来源。RP-08 用。
@@ -209,8 +279,26 @@ impl Dispatcher {
             None
         };
 
+        // EXE-027：名额先要到手再提交。
+        // **要不到就不提交**——排队策略（`TSK-008` 的 Queue）说的"由执行层的并发上限
+        // 兜着"兜的就是这里；没有队列可排，所以这一次落为跳过，下一次触发再来。
+        let permit = match self.slots.as_ref() {
+            Some(slots) => match slots.take(task.project) {
+                Some(permit) => Some(permit),
+                None => {
+                    return Ok(Outcome::Skipped {
+                        why: "并发已达上限（EXE-027），这次不提交".into(),
+                    });
+                }
+            },
+            None => None,
+        };
+
         let worksheet = assemble(task, &version, event, workspace)?;
         let run = self.exec.submit(worksheet)?;
+        if let (Some(slots), Some(permit)) = (self.slots.as_ref(), permit) {
+            slots.keep(&run.to_string(), permit);
+        }
         self.remember(task.id, event.external_id.as_deref(), run)?;
         Ok(Outcome::Accepted {
             run: run.to_string(),
@@ -371,10 +459,13 @@ type _UserLink = UserId;
 ///
 /// `EXE-021` 的"提交即返回"管的是**触发**（`run.trigger`）:那条路上没有人在等。
 /// 测试执行是作者手动发起、要当场看结果的——**提交完就返回等于没有回答他的问题**。
+/// 技能试跑。**也占名额**（`EXE-027`）——它跑的是真的执行，
+/// 计不计数不该取决于是谁点的。它自己等到跑完，所以名额是个局部变量。
 pub struct TestRuns {
     exec: Arc<dyn ExecContract>,
     workspaces: Option<Arc<dyn WorkspaceSource>>,
     clock: Arc<dyn Clock>,
+    concurrency: Option<Arc<xops_task::Concurrency>>,
 }
 
 impl std::fmt::Debug for TestRuns {
@@ -384,11 +475,19 @@ impl std::fmt::Debug for TestRuns {
 }
 
 impl TestRuns {
+    /// 接上并发名额（`EXE-027`）。
+    #[must_use]
+    pub fn with_concurrency(mut self, concurrency: Arc<xops_task::Concurrency>) -> Self {
+        self.concurrency = Some(concurrency);
+        self
+    }
+
     #[must_use]
     pub fn new(exec: Arc<dyn ExecContract>, clock: Arc<dyn Clock>) -> Self {
         Self {
             exec,
             workspaces: None,
+            concurrency: None,
             clock,
         }
     }
@@ -408,7 +507,7 @@ impl xops_skill::service::TestRunner for TestRuns {
         inputs: &serde_json::Value,
     ) -> Result<xops_skill::service::TestOutcome> {
         // ⚠️ **一个不落库的任务。** 测试执行不该在账上留下一个任务对象——
-        // 它是作者的一次试跑，不是一条自动化。派工单装配要一个任务，所以这里造一个,
+        // 它是作者的一次试跑，不是一条自动化。派工单装配要一个任务，所以这里造一个，
         // **但它从不经过 `Tasks` 写入任何地方**。
         let task = Task {
             id: TaskId::generate(),
@@ -449,6 +548,16 @@ impl xops_skill::service::TestRunner for TestRuns {
             at: self.clock.now(),
             payload: serde_json::json!({}),
         };
+        // EXE-027：名额握在手里直到这次试跑收尾（下面等到跑完才返回）。
+        let _permit = match self.concurrency.as_ref() {
+            Some(concurrency) => Some(
+                concurrency
+                    .acquire(version.project)
+                    .ok_or_else(|| Error::unavailable("并发已达上限（EXE-027），试跑请稍后再来"))?,
+            ),
+            None => None,
+        };
+
         let worksheet = crate::worksheet::assemble(&task, version, &event, workspace)?;
         let timeout = worksheet.limits.timeout_millis;
         let run = self.exec.submit(worksheet)?;
@@ -497,7 +606,7 @@ const LANDED_SPACE: &str = "dispatch-landed";
 ///
 /// 触发那条路是**非阻塞**的（`EXE-021`）:`run.trigger` 提交完就返回，没有人在等。
 /// 于是"执行跑完之后谁把 `_runs` 那一行写下来"就成了一个**没有主人的问题**——
-/// 而它不写，`_runs` 就是空的:执行成功了，账上什么也没有。
+/// 而它不写，`_runs` 就是空的：执行成功了，账上什么也没有。
 ///
 /// ⚠️ **这个口子是拿真模型跑端到端时撞出来的**:`run.status` 说 `succeeded`，
 /// `row.sys-runs.select` 一行都没有。落账的实现（`xops_task::Landing`）一直都在，
@@ -514,6 +623,8 @@ pub struct Reaper {
     landing: Arc<xops_task::landing::Landing>,
     store: Arc<dyn Store>,
     exec: Arc<dyn ExecContract>,
+    /// 落账即归还名额（`EXE-027`）。**要和 [`Dispatcher`] 拿的是同一个**。
+    slots: Option<Arc<Slots>>,
     /// 执行结束要通知任务所有者（`NTF-007`、`EXE-024`）。**没接就等于不通知**——
     /// 而"自动化失灵是静默的"正是通知这条要挡的事。
     notices: Option<Arc<dyn RunNotifier>>,
@@ -547,8 +658,17 @@ impl Reaper {
             landing,
             store,
             exec,
+            slots: None,
             notices: None,
         }
+    }
+
+    /// 接上并发名额。**必须与 [`Dispatcher::with_concurrency`] 传同一个** ——
+    /// 一个发一个收，分成两份就等于不限。
+    #[must_use]
+    pub fn with_concurrency(mut self, slots: Arc<Slots>) -> Self {
+        self.slots = Some(slots);
+        self
     }
 
     #[must_use]
@@ -576,6 +696,11 @@ impl Reaper {
             match self.land_one(task, &outcome) {
                 Ok(()) => {
                     self.mark_landed(&run)?;
+                    // 跑完了，名额还回去。**在标记之后**——落账失败要重来，
+                    // 那次重来还占着这个名额才对。
+                    if let Some(slots) = self.slots.as_ref() {
+                        slots.give_back(&run);
+                    }
                     landed += 1;
                 }
                 Err(error) => {

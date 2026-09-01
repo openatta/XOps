@@ -8,12 +8,14 @@
 //!
 //! 归属：RP-15。
 
+pub mod chain;
 pub mod evaluate;
 pub mod protection;
 pub mod tools;
 pub mod verdict;
 pub mod writers;
 
+pub use chain::{Chain, NotSettledNotifier, PluginEvaluator, PluginVerdict, TransitionCall};
 pub use evaluate::{Evaluator, Written};
 pub use protection::{INSTANCE_COLUMN, Origin};
 pub use verdict::{Rule, Verdict};

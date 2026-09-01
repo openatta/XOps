@@ -206,7 +206,19 @@ impl Directory {
     ///
     /// # Errors
     /// 用户不存在，或者底层写失败。
-    /// 引导:给一个内建账号签一把令牌，账号不在就先建。
+    /// 全部项目。**不判权**——给平台自己的后台维护用。
+    ///
+    /// # Errors
+    /// 底层不可用。
+    pub fn all_projects(&self) -> Result<Vec<Project>> {
+        Ok(self
+            .all::<Project>(PROJECTS)?
+            .into_iter()
+            .map(|(_, project)| project)
+            .collect())
+    }
+
+    /// 引导：给一个内建账号签一把令牌，账号不在就先建。
     ///
     /// **第一把令牌只能这样来**——签令牌经 MCP 要先有令牌（`MCP-002`），
     /// 于是第一把无处可来。

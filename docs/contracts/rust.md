@@ -848,6 +848,9 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - `trigger_history` 是 `TSK-016` 的落点：**一个静默被跳过的任务，会让人以为它在跑。**
 - **RP-13 往这里接两类事件源，RP-14 往这里塞「节点被激活」**——它们加的是事件的来源，
   不是新的事件类型。
+- **新增** `with_concurrency`：`EXE-027` 的落点。**没接就等于不限**，所以装配层必须接。
+  要不到名额落为 `Outcome::Skipped`——`TSK-008` 的 Queue 说的"由执行层的并发上限兜着"
+  兜的就是这里；没有队列可排，所以这一次不提交，下一次触发再来。
 
 ### Element: rust:xops-dispatch#WorkspaceSource
 - module: xops-dispatch
@@ -1524,6 +1527,8 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 测试执行那条链。**走的是与正式执行完全相同的路**——
   用一个**不落库的任务**装配派工单:测试执行不该在账上留下一个任务对象，
   它是作者的一次试跑，不是一条自动化。
+- **新增** `with_concurrency`。**试跑也占名额**——它跑的是真的执行，
+  计不计数不该取决于是谁点的。它自己等到跑完，所以名额是个局部变量。
 
 ### Element: rust:xops-dispatch#Reaper
 - module: xops-dispatch
@@ -1538,6 +1543,9 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   ——`EXE-014` 说引擎的概念不得泄漏进契约，所以那里不会有。**扫一遍是唯一能做的事。**
 - 单笔落账失败**不中断整轮、也不标记**:下一轮再试，而"一直落不下去"记一条 warn。
 - 账先落，**再通知**（`NTF-007`）:反过来会出现"收到通知去看，账上还没有"。
+- **新增** `with_concurrency`：**落账即归还名额**。没有这一条上限只减不增——
+  第一批跑完之后平台就再也接不了活。归还在**标记已落之后**：落账失败要重来，
+  那次重来还占着这个名额才对。
 
 ### Element: rust:xops-dispatch#RunNotifier
 - module: xops-dispatch
@@ -1562,3 +1570,69 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   能碰数据库的人本来就能拿到一切。
 - 它绕过自注册开关（`IDN-003`）是有意的:那条开关管的是"陌生人登录能不能自动建号"，
   与一个已经能读写数据库的调用方无关。
+
+### Element: rust:xops-settle#Chain
+- module: xops-settle
+- consumers: [xopsd]
+- **`rust:xops-store#Evaluate` 唯一的生产实现**。没有它整个流程引擎是惰性的：
+  行写进结算表，没有任何东西去求值——而这件事**不报错**，所以只有真跑一遍才看得见。
+- `scope()` 在取锁之前被问一次，返回结算表 + 主体表（主体表只允许 update，`CON-003`）。
+- 判定顺序是**平台先、插件后**（`FLW-028`）：②～⑦ 由 `Rule` 判完，
+  ① 的"满足筛选"那一半才交给插件。**不满足的行根本不会被交给插件。**
+
+### Element: rust:xops-settle#PluginEvaluator
+- module: xops-settle
+- consumers: [RP-16, xopsd]
+- 流转插件的注入位。本 crate 不认识脚本载体，只声明这个缝。
+- ⚠️ **没接不是"通过"**：指定了流转插件而部署没有载体时明确失败。
+
+### Element: rust:xops-settle#TransitionCall
+- module: xops-settle
+- consumers: [RP-16, xopsd]
+- 一次流转插件求值的完整描述：三样输入（`PLG-002`）**都由平台在调用前查好**，
+  加上平台肯代写的那两张表。
+- ⚠️ **插件判的是「刚写进来的这一行」**，不是表里所有行——它替代的是 `FLW-026` ①
+  "满足筛选"那一半，票数由平台按 `settledBy` 数。拿 `related` 聚合会把**已经被平台
+  否掉的行**（职责分离、重复表态）也算进来，那些行留在表里但不结算任何节点。
+  首版三个模板里有两个是这么写的，**真跑一遍才撞出来**：发起人自批被否掉、
+  行留在表里，下一个人写一条不合格的表态，插件扫到那条被否掉的批准，整个实例判成通过。
+- 打成一个结构而不是七个参数：拆开之后调用点会开始只传一部分。
+
+### Element: rust:xops-settle#NotSettledNotifier
+- module: xops-settle
+- consumers: [RP-17, xopsd]
+- 「行没被采纳」的落点（`FLW-027`）。**没接就等于写的人不知道自己白写了**。
+
+### Element: rust:xops-dispatch#Slots
+- module: xops-dispatch
+- consumers: [xopsd]
+- `rust:xops-task#Concurrency` 的持有处。`Permit` 是析构即归还的，可提交是非阻塞的、
+  跑完由 `Reaper` 在另一轮里发现——**没有一个"跟着这次执行活着"的对象**能放它。
+  所以名额按 run 存着，**落账的那一刻还回去**。
+- ⚠️ `Dispatcher` 与 `Reaper` 必须拿**同一个**：一个发一个收，分成两份就等于不限。
+- 要不到名额落为 `Outcome::Skipped`，不是 `Err`——任务本身没问题。
+
+### Element: rust:xops-dispatch#Ticker
+- module: xops-dispatch
+- consumers: [xopsd]
+- 定时那一半的**另一半**：`Schedules` 只管存，它管到点去点。
+  **没有它 `schedule.configure` 存得进去、永不触发**——而且是静默的。
+- 外部标识用「这一次的窗口」，同一个窗口重复扫到时由 `TRG-013` 挡成 Duplicate。
+
+### Element: rust:xops-task#Keeper
+- module: xops-task
+- consumers: [xopsd]
+- 保留期的**驱动方**：遍历所有项目所有表调 `Cleanup::sweep`，外加注入进来的 `Prunable`。
+- ⚠️ **它不在 `cleanup.rs` 里**是有意的：那个文件的公开面被 `RET-005` 的验收数着
+  （只接受一个时刻，没有"删掉某一行"的入口）。塞进去会把那条验收变成一句空话。
+
+### Element: rust:xops-task#Prunable
+- module: xops-task
+- consumers: [RP-12, RP-17, xopsd]
+- 不住在表里、但同样有保留期的东西的注入位（审计留痕、通知）。
+
+### Element: rust:xopsd#background
+- module: xopsd
+- consumers: [xopsd]
+- 四条后台循环：落账 500ms · 定时 5s · 实例过期 60s · 保留期 1h。
+- 睡眠切片，**停机不被最长的那条拖住**。

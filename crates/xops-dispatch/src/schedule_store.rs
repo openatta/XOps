@@ -128,3 +128,98 @@ impl Schedules {
         self.put(&schedule)
     }
 }
+
+/// 到点了去点它（`TRG-009`）。
+///
+/// # 它补的是哪个口子
+///
+/// `schedule.configure` 存得进去、`schedule.next` 算得出下一次——
+/// **而没有任何东西到点去触发**。定时任务因此永远不会跑，而且它是静默的:
+/// 配置在那儿、时间也对，就是什么都不发生。
+pub struct Ticker {
+    schedules: Arc<Schedules>,
+    tasks: Arc<xops_task::Tasks>,
+    dispatcher: Arc<crate::Dispatcher>,
+    clock: Arc<dyn xops_core::Clock>,
+}
+
+impl std::fmt::Debug for Ticker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ticker").finish_non_exhaustive()
+    }
+}
+
+impl Ticker {
+    #[must_use]
+    pub fn new(
+        schedules: Arc<Schedules>,
+        tasks: Arc<xops_task::Tasks>,
+        dispatcher: Arc<crate::Dispatcher>,
+        clock: Arc<dyn xops_core::Clock>,
+    ) -> Self {
+        Self {
+            schedules,
+            tasks,
+            dispatcher,
+            clock,
+        }
+    }
+
+    /// 扫一遍，把到点的都点了。返回点了几个。
+    ///
+    /// # Errors
+    /// 底层不可用。**单个触发失败不中断整轮。**
+    pub fn tick(&self) -> Result<usize> {
+        let now = self.clock.now();
+        let mut fired = 0;
+        for mut schedule in self.schedules.all()? {
+            if !schedule.due(now) {
+                continue;
+            }
+            let Ok(task) = self.tasks.read_internal(schedule.task) else {
+                continue;
+            };
+            let event = crate::Event {
+                kind: crate::EventKind::Scheduled,
+                project: task.project,
+                // ⚠️ **外部标识用「这一次的窗口」**:同一个窗口重复扫到时
+                // `TRG-013` 的幂等会把它挡成 Duplicate，而不是跑第二遍。
+                external_id: Some(format!(
+                    "schedule\u{0}{}\u{0}{}",
+                    schedule.task,
+                    now.as_millis() / 1000
+                )),
+                triggered_by: crate::Trigger::Schedule {
+                    configured_by: schedule.configured_by,
+                },
+                revision: None,
+                at: now,
+                payload: serde_json::json!({}),
+            };
+            match self.dispatcher.trigger(&task, &event) {
+                Ok(_) => {
+                    // **先记下已经点过，再算下一次**——顺序反了会重复点。
+                    schedule.last_fired_at = Some(now);
+                    if let Err(error) = self.schedules.put(&schedule) {
+                        xops_core::log::error(
+                            "schedule.mark",
+                            &[
+                                ("task", &schedule.task.to_string()),
+                                ("error", &format!("{error}")),
+                            ],
+                        );
+                    }
+                    fired += 1;
+                }
+                Err(error) => xops_core::log::warn(
+                    "schedule.fire",
+                    &[
+                        ("task", &schedule.task.to_string()),
+                        ("error", &format!("{error}")),
+                    ],
+                ),
+            }
+        }
+        Ok(fired)
+    }
+}

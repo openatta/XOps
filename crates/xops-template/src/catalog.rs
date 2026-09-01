@@ -11,11 +11,11 @@
 
 use serde_json::json;
 use xops_core::Role;
-use xops_flow::definition::{Criteria, Evaluation, Filter, RowQuery, Start, Writers};
+use xops_flow::definition::{Criteria, Evaluation, Filter, Start, Writers};
 use xops_script::capability::{Capabilities, Position};
 use xops_script::plugin::Case;
 use xops_table::ColumnType;
-use xops_table::table::{Protection, TableId};
+use xops_table::table::Protection;
 
 use crate::template::{ColumnSpec, FlowSpec, NodeSpec, PluginSpec, StepSpec, TableSpec, Template};
 
@@ -76,20 +76,6 @@ fn members() -> Writers {
         roster: None,
         task: None,
     }
-}
-
-/// 求值用到的那些行。**指定了流转插件，就必须声明它要用到哪些行**（`FLW-003`）——
-/// 理由是流转插件读不到表，输入由平台在调用前查好喂进去。
-fn recent(table: &str, column: &str) -> Vec<RowQuery> {
-    vec![RowQuery {
-        table: TableId::user(table).unwrap_or_else(|_| TableId::user("rows").unwrap()),
-        criteria: Criteria {
-            filters: vec![Filter::Present {
-                column: column.to_owned(),
-            }],
-        },
-        limit: 50,
-    }]
 }
 
 /// 一套"主体 + 表态"的模板，bugs 与 issues 只差名字与状态取值。
@@ -164,7 +150,9 @@ fn tracker(
                     separation_of_duties: false,
                     evaluation: Evaluation::Plugin {
                         plugin: name.to_owned(),
-                        inputs: recent(settlement, "decision"),
+                        // 用不到 —— 它只看被写入的那一行。声明一批然后不看，
+                        // 是一次白付在写串行区间里的全表扫描（`CON-002` ③）。
+                        inputs: Vec::new(),
                     },
                 },
             }],
@@ -224,21 +212,20 @@ fn tracker_plugin(
 ) -> String {
     format!(
         r#"function decide(input) {{
-  var rows = input.related || [];
+  // 判的是**刚写进来的这一行**（`FLW-026` ①"满足筛选"那一半）。
+  // 票数不归它数 —— 平台按 settledBy 数（`quorum`）。
+  // 扫 related 会把已经被平台否掉的行也算进来，那些行不结算任何节点。
+  var decision = (input.row || {{}}).decision;
   var row = input.instance && input.instance.subjectRow;
   function writeStatus(status) {{
     return row ? [{{ table: '{subject}', row: row, values: {{ status: status }} }}] : [];
   }}
-  for (var i = 0; i < rows.length; i++) {{
-    if (rows[i].decision === '{refuse}') {{
-      return {{ verdict: 'reject', writes: writeStatus('{closed}') }};
-    }}
+  if (decision === '{refuse}') {{
+    return {{ verdict: 'reject', writes: writeStatus('{closed}') }};
   }}
-  var yes = 0;
-  for (var j = 0; j < rows.length; j++) {{
-    if (rows[j].decision === '{accept}') {{ yes++; }}
+  if (decision === '{accept}') {{
+    return {{ verdict: 'pass', writes: writeStatus('{confirmed}') }};
   }}
-  if (yes >= 1) {{ return {{ verdict: 'pass', writes: writeStatus('{confirmed}') }}; }}
   return {{ verdict: 'fail', writes: [] }};
 }}"#
     )
@@ -312,7 +299,11 @@ pub fn approvals() -> Template {
                     separation_of_duties: true,
                     evaluation: Evaluation::Plugin {
                         plugin: "approvals".into(),
-                        inputs: recent("approvals", "decision"),
+                        // **一行都不用取**:它判的是刚写进来的那一行。
+                        // `FLW-003` 要求声明"求值要用到哪些行"——用不到就声明空，
+                        // 而不是声明一批然后不看：那是一次白付的全表扫描，
+                        // 而且付在写串行区间里（`CON-002` ③）。
+                        inputs: Vec::new(),
                     },
                 },
             }],
@@ -323,20 +314,17 @@ pub fn approvals() -> Template {
             entry: "decide".into(),
             capabilities: Capabilities::none(),
             source: r#"function decide(input) {
-  var rows = input.related || [];
-  function hasReason(row) {
-    return typeof row.reason === 'string' && row.reason.trim() !== '';
+  // 判的是**这一行**，不是表里所有行。
+  // 聚合会把已经被平台否掉的行（职责分离、同一人重复表态……）也算进来 ——
+  // 那些行留在表里（追加式），但它们不结算任何节点。
+  var row = input.row || {};
+  var reason = row.reason;
+  // TPL-006：理由为空就不结算。空串与全空白都算空。
+  if (typeof reason !== 'string' || reason.trim() === '') {
+    return { verdict: 'fail', writes: [] };
   }
-  var withReason = [];
-  for (var i = 0; i < rows.length; i++) {
-    if (hasReason(rows[i])) { withReason.push(rows[i]); }
-  }
-  for (var j = 0; j < withReason.length; j++) {
-    if (withReason[j].decision === '驳回') { return { verdict: 'reject', writes: [] }; }
-  }
-  for (var k = 0; k < withReason.length; k++) {
-    if (withReason[k].decision === '批准') { return { verdict: 'pass', writes: [] }; }
-  }
+  if (row.decision === '驳回') { return { verdict: 'reject', writes: [] }; }
+  if (row.decision === '批准') { return { verdict: 'pass', writes: [] }; }
   return { verdict: 'fail', writes: [] };
 }"#
             .into(),
@@ -345,8 +333,8 @@ pub fn approvals() -> Template {
                     name: "有理由的批准算数".into(),
                     input: json!({
                         "instance": {},
-                        "row": {},
-                        "related": [{"decision": "批准", "reason": "看过了，没问题"}],
+                        "row": {"decision": "批准", "reason": "看过了，没问题"},
+                        "related": [],
                     }),
                     expected: json!({"verdict": "pass", "writes": []}),
                 },
@@ -354,8 +342,8 @@ pub fn approvals() -> Template {
                     name: "空理由的批准不结算".into(),
                     input: json!({
                         "instance": {},
-                        "row": {},
-                        "related": [{"decision": "批准", "reason": ""}],
+                        "row": {"decision": "批准", "reason": ""},
+                        "related": [],
                     }),
                     expected: json!({"verdict": "fail", "writes": []}),
                 },
@@ -363,8 +351,8 @@ pub fn approvals() -> Template {
                     name: "全是空白的理由也不结算".into(),
                     input: json!({
                         "instance": {},
-                        "row": {},
-                        "related": [{"decision": "批准", "reason": "   "}],
+                        "row": {"decision": "批准", "reason": "   "},
+                        "related": [],
                     }),
                     expected: json!({"verdict": "fail", "writes": []}),
                 },
@@ -372,8 +360,8 @@ pub fn approvals() -> Template {
                     name: "有理由的驳回让整个实例进拒绝终态".into(),
                     input: json!({
                         "instance": {},
-                        "row": {},
-                        "related": [{"decision": "驳回", "reason": "预算不够"}],
+                        "row": {"decision": "驳回", "reason": "预算不够"},
+                        "related": [],
                     }),
                     expected: json!({"verdict": "reject", "writes": []}),
                 },

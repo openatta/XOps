@@ -509,6 +509,14 @@ impl Tables {
     ///
     /// # Errors
     /// 非成员看不到。
+    /// 一个项目里的全部表，**不判权**。给平台自己的后台维护用。
+    ///
+    /// # Errors
+    /// 底层不可用。
+    pub fn list_internal(&self, project: ProjectId) -> Result<Vec<TableSchema>> {
+        self.catalog.list(project)
+    }
+
     pub fn list(&self, viewer: UserId, project: ProjectId) -> Result<Vec<TableSchema>> {
         self.directory
             .authorize(viewer, project, Action::ReadProject)?;

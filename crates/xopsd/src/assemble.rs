@@ -55,8 +55,235 @@ pub struct Assembled {
     /// 把跑完的执行落成账。**没有它 `_runs` 就是空的**——
     /// 触发那条路是非阻塞的，执行跑完之后没有人在等着写账。
     pub reaper: Arc<xops_dispatch::dispatch::Reaper>,
+    /// 到点了去点定时任务（`TRG-009`）。
+    pub ticker: Arc<xops_dispatch::schedule_store::Ticker>,
+    /// 保留期（`RET-003` · `AUD-010` · `RET-008`）。
+    pub keeper: Arc<xops_task::keeper::Keeper>,
+    pub flows: Arc<Flows>,
+    pub clock: Arc<dyn Clock>,
     /// 目录。**给引导用**——第一个用户与第一份令牌要从这里来。
     pub directory: Arc<Directory>,
+}
+
+/// Git webhook → 一个事件 → 订阅了它的那些任务（`TRG-011`）。
+///
+/// ⚠️ **端点内不做任何拉取或执行**（`TRG-014`）:这里只解载荷、按投递标识幂等地入队。
+/// 平台的 webhook 都有超时并会因超时重投，慢一点就是放大问题。
+///
+/// ⚠️ **错误一律映射成"不存在"**（`TRG-012`）——端点不能成为探测器:
+/// 验签失败、载荷不合形状、项目不存在，回的东西必须一模一样。
+struct GitWebhooks {
+    repos: Arc<Repos>,
+    tasks: Arc<xops_task::Tasks>,
+    dispatcher: Arc<Dispatcher>,
+    /// ⚠️ **平台级一把，不是每个项目一把。** 按项目存要在仓绑定上加一列并配一个 tool,
+    /// 那是一次接口变更。**没给就一律回"不存在"**——与没接落点一模一样。
+    secret: Option<String>,
+    clock: Arc<dyn Clock>,
+}
+
+impl xops_web::WebhookSink for GitWebhooks {
+    fn deliver(
+        &self,
+        signature: Option<&str>,
+        event: Option<&str>,
+        delivery: Option<&str>,
+        body: &[u8],
+    ) -> Result<()> {
+        let reject = xops_dispatch::webhook::rejection;
+        let (Some(event), Some(delivery)) = (event, delivery) else {
+            return Err(reject());
+        };
+        let payload: serde_json::Value = serde_json::from_slice(body).map_err(|_| reject())?;
+        let git =
+            xops_dispatch::webhook::extract(&payload, delivery, event).map_err(|_| reject())?;
+
+        // 哪个项目 —— 按仓绑定找。**找不到与验签失败回同一个东西。**
+        // 验签在最前面。**签名不对就到此为止**，连"这个项目在不在"都不去问——
+        // 那正是 `TRG-012` 说的"不泄露任何关于任务或项目是否存在的信息"。
+        let secret = self.secret.as_deref().ok_or_else(reject)?;
+        if !xops_repo::GitPlatform::verify_webhook(
+            &xops_repo::GitHub,
+            secret,
+            body,
+            signature.unwrap_or_default(),
+        ) {
+            return Err(reject());
+        }
+
+        let mut delivered = false;
+        for binding in self.repos.all().map_err(|_| reject())? {
+            let subscribers = self
+                .tasks
+                .subscribers(binding.project, "git")
+                .map_err(|_| reject())?;
+            for task in subscribers {
+                let event = xops_dispatch::Event {
+                    kind: xops_dispatch::EventKind::Git,
+                    project: binding.project,
+                    // `TRG-013`：**按投递标识幂等**——平台超时重投不该跑第二遍。
+                    external_id: Some(git.delivery.clone()),
+                    triggered_by: xops_dispatch::Trigger::External {
+                        source: "git".to_owned(),
+                    },
+                    // `TRG-017`：**这次要它看的那一版**，覆盖任务里写死的。
+                    revision: Some(git.revision.clone()),
+                    at: self.clock.now(),
+                    payload: serde_json::json!({
+                        "branch": git.branch, "event": git.event,
+                    }),
+                };
+                let _ = self.dispatcher.trigger(&task, &event);
+            }
+            delivered = true;
+        }
+        // ⚠️ **没有订阅者也算收下了。** 回"不存在"会让调用方能探出
+        // "这个仓有没有被订阅"——那是 `TRG-012` 要挡的同一件事。
+        let _ = delivered;
+        Ok(())
+    }
+}
+
+/// 求值链的接头。
+///
+/// ⚠️ **它存在的唯一理由是一个真实的环**:`WriteEngine` 要求值链，
+/// 求值链要 `Flows` 与 `Tables`，而那两个都要 `WriteEngine`。
+/// 先把空的接进去、链建好再填——**在填上之前它什么也不做，与没接一模一样**。
+#[derive(Default)]
+struct LateChain {
+    inner: std::sync::RwLock<Option<Arc<dyn xops_store::Evaluate>>>,
+}
+
+impl LateChain {
+    fn fill(&self, chain: Arc<dyn xops_store::Evaluate>) {
+        if let Ok(mut slot) = self.inner.write() {
+            *slot = Some(chain);
+        }
+    }
+
+    fn get(&self) -> Option<Arc<dyn xops_store::Evaluate>> {
+        self.inner.read().ok().and_then(|slot| slot.clone())
+    }
+}
+
+impl xops_store::Evaluate for LateChain {
+    fn scope(&self, table: &xops_core::TableName) -> xops_store::EvalScope {
+        self.get()
+            .map_or_else(xops_store::EvalScope::none, |chain| chain.scope(table))
+    }
+
+    fn evaluate(
+        &self,
+        request: &xops_store::WriteRequest,
+        view: &dyn xops_store::RowView,
+    ) -> Result<Vec<xops_store::Writeback>> {
+        self.get()
+            .map_or_else(|| Ok(Vec::new()), |chain| chain.evaluate(request, view))
+    }
+}
+
+/// 流转插件的求值（`PLG-002`）。
+struct TransitionPlugins {
+    plugins: Arc<Plugins>,
+}
+
+impl xops_settle::PluginEvaluator for TransitionPlugins {
+    fn transition(
+        &self,
+        call: &xops_settle::TransitionCall<'_>,
+    ) -> Result<xops_settle::PluginVerdict> {
+        // 引用的是**固定版本**（`PLG-009`）:先按名字取已安装的最新一版。
+        let installed = self.plugins.resolve_latest(call.project, call.plugin)?;
+        let settled = xops_script::evaluate_transition(
+            &installed,
+            &xops_script::TransitionInput {
+                instance: call.instance.clone(),
+                row: call.row.clone(),
+                related: call.related.clone(),
+            },
+            call.settlement,
+            call.subject,
+        )?;
+        Ok(xops_settle::PluginVerdict {
+            verdict: match settled.verdict {
+                xops_script::Verdict::Pass => "pass",
+                xops_script::Verdict::Reject => "reject",
+                xops_script::Verdict::Fail => "fail",
+            }
+            .to_owned(),
+            writes: settled
+                .writes
+                .into_iter()
+                .map(|write| (write.table, write.row, write.values))
+                .collect(),
+            note: settled.note,
+        })
+    }
+}
+
+/// 「这一行没被采纳」→ 通知写入者（`FLW-027`）。
+struct NotSettled {
+    notices: Arc<Notices>,
+}
+
+impl xops_settle::NotSettledNotifier for NotSettled {
+    fn not_settled(
+        &self,
+        project: ProjectId,
+        instance: &str,
+        table: &str,
+        row: &str,
+        writer: xops_identity::UserId,
+        why: &str,
+    ) {
+        let _ = self
+            .notices
+            .notify(&xops_notice::SourceEvent::RowNotSettled {
+                project,
+                instance: instance.to_owned(),
+                table: table.to_owned(),
+                row: row.to_owned(),
+                writer,
+                reason: why.to_owned(),
+            });
+    }
+}
+
+/// 审计留痕的保留期（`AUD-010`）。
+///
+/// ⚠️ **它只吃 `_audit` 上的留痕。** 有业务行的那些事件不是"留痕"，
+/// 它们**是业务状态本身**——删了它们 `AUD-004` 当场落空。
+struct PruneAudit {
+    audit: Arc<AuditLog>,
+}
+
+impl xops_task::keeper::Prunable for PruneAudit {
+    fn what(&self) -> &'static str {
+        "审计留痕"
+    }
+
+    fn prune(&self, now: xops_core::Timestamp) -> Result<usize> {
+        // 默认留一年。**保留期内不可删除**（`AUD-010`）。
+        const KEEP_MILLIS: i64 = 365 * 24 * 60 * 60 * 1_000;
+        self.audit.prune(xops_core::Timestamp::from_millis(
+            now.as_millis() - KEEP_MILLIS,
+        ))
+    }
+}
+
+/// 通知的保留期（`RET-008`，默认三个月，与任务无关）。
+struct PruneNotices {
+    notices: Arc<Notices>,
+}
+
+impl xops_task::keeper::Prunable for PruneNotices {
+    fn what(&self) -> &'static str {
+        "通知"
+    }
+
+    fn prune(&self, now: xops_core::Timestamp) -> Result<usize> {
+        self.notices.prune(now)
+    }
 }
 
 /// 执行结束 → 一条通知（`NTF-007`）。
@@ -125,7 +352,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
     // ① 存储。**换一个实现进去，上面的一切不改一行**（`CON-012`、`G12`）。
     //
     // 两条缝一起建：[`Store`] 管事件与键值投影，[`Relations`] 管**带索引的当前视图**。
-    // 后者是缓存不是账——需要按别的列找的表独立成一张真表,索引交给数据库,
+    // 后者是缓存不是账——需要按别的列找的表独立成一张真表，索引交给数据库，
     // **而不是在键值里手写一条二级索引**。
     let (store, relations): (Arc<dyn Store>, Arc<dyn Relations>) = if config.in_memory() {
         (
@@ -140,10 +367,18 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
 
     // ② 写入路径：目录 + 写引擎 + 四道钩子里的前两道。
     let catalog = Arc::new(Catalog::open(Arc::clone(&store), Arc::clone(&clock))?);
+    // ⚠️ **求值链是后绑的。** `WriteEngine` 要它，而它要 `Flows` 与 `Tables`，
+    // 而那两个又都要 `WriteEngine`——这是一个真实的环。
+    // `LateChain` 是那个环的接头：先把空的接进去，等链建好了再填。
+    //
+    // 不这么做的替代方案是让 `Flows` / `Tables` 接受一个"稍后给"的引擎，
+    // 那会把这个环推到每一个调用方身上。**接头只有一个地方，比到处都是好。**
+    let late_chain = Arc::new(LateChain::default());
     let engine = Arc::new(
         WriteEngine::new(Arc::clone(&store), Arc::clone(&clock))
             .with_pre_write(Arc::clone(&catalog) as Arc<dyn xops_store::PreWrite>)
-            .with_schema_check(Arc::clone(&catalog) as Arc<dyn xops_store::SchemaCheck>),
+            .with_schema_check(Arc::clone(&catalog) as Arc<dyn xops_store::SchemaCheck>)
+            .with_evaluate(Arc::clone(&late_chain) as Arc<dyn xops_store::Evaluate>),
     );
 
     // ③ 审计。**每个包的平台表都要登记**，否则重建索引时走不到它的事件流。
@@ -191,7 +426,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         Arc::clone(&relations),
         Arc::clone(&clock),
     )?);
-    // ⚠️ 技能与「发起测试执行」互相要对方:`Skills` 要一条执行链才发得起测试执行，
+    // ⚠️ 技能与「发起测试执行」互相要对方：`Skills` 要一条执行链才发得起测试执行，
     // 而那条链要 `Skills` 去解出技能版本。先建 `Skills`，再把链接上去——
     // 这是 `SKL-003` 那条门在装配层的形状。
     let skills = Arc::new(Skills::new(
@@ -228,6 +463,11 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         )
         .with_subscription_check(Arc::clone(&whitelist) as Arc<dyn xops_task::SubscriptionCheck>),
     );
+    // ⑥ 并发名额（`EXE-027`）。**发和收要是同一个**:
+    // `Dispatcher` 提交时拿，`Reaper` 落账时还。分成两份就等于不限。
+    let concurrency = Arc::new(xops_task::Concurrency::default());
+    let slots = Arc::new(xops_dispatch::Slots::new(Arc::clone(&concurrency)));
+
     // 接上测试执行那条链（`SKL-003`）。**没有它技能发布不了**——
     // 发布要一次成功的测试执行，而那次执行的入口在这里。
     let skills = Arc::new(
@@ -238,23 +478,33 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
             Arc::clone(&directory),
             Arc::clone(&clock),
         )
-        .with_test_runner(Arc::new(xops_dispatch::dispatch::TestRuns::new(
-            Arc::clone(&exec),
-            Arc::clone(&clock),
-        ))),
+        .with_test_runner(Arc::new(
+            xops_dispatch::dispatch::TestRuns::new(Arc::clone(&exec), Arc::clone(&clock))
+                .with_concurrency(Arc::clone(&concurrency)),
+        )),
     );
 
-    let dispatcher = Arc::new(Dispatcher::new(
-        Arc::clone(&tasks),
-        Arc::clone(&skills),
-        Arc::clone(&exec),
-        Arc::clone(&audit),
-        Arc::clone(&store),
-        Arc::clone(&clock),
-    ));
+    let dispatcher = Arc::new(
+        Dispatcher::new(
+            Arc::clone(&tasks),
+            Arc::clone(&skills),
+            Arc::clone(&exec),
+            Arc::clone(&audit),
+            Arc::clone(&store),
+            Arc::clone(&clock),
+        )
+        .with_concurrency(Arc::clone(&slots)),
+    );
     let schedules = Arc::new(xops_dispatch::schedule_store::Schedules::new(
         Arc::clone(&store),
         Arc::clone(&audit),
+    ));
+    // ② 到点了去点它。**没有它 `schedule.configure` 存得进去、永不触发。**
+    let ticker = Arc::new(xops_dispatch::schedule_store::Ticker::new(
+        Arc::clone(&schedules),
+        Arc::clone(&tasks),
+        Arc::clone(&dispatcher),
+        Arc::clone(&clock),
     ));
 
     // ⑥ 仓绑定。密钥从环境来 —— **没有它这一步就起不来**，见 `Config::from_env`。
@@ -303,9 +553,30 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
             Arc::clone(&store),
             Arc::clone(&exec),
         )
+        .with_concurrency(Arc::clone(&slots))
         // 执行结束通知任务所有者（`NTF-007`）。**没接就等于不通知**，
         // 而"自动化失灵是静默的"正是这条要挡的。
         .with_notices(Arc::new(RunNotices {
+            notices: Arc::clone(&notices),
+        })),
+    );
+
+    // ④⑤ 保留期。三条一起做：`_runs` 与产出行、审计留痕、通知。
+    let keeper = Arc::new(
+        xops_task::keeper::Keeper::new(
+            Arc::new(xops_task::cleanup::Cleanup::new(
+                Arc::clone(&tables),
+                Arc::clone(&store),
+                Arc::clone(&audit),
+            )),
+            Arc::clone(&tables),
+            Arc::clone(&directory),
+            Arc::clone(&clock),
+        )
+        .with(Arc::new(PruneAudit {
+            audit: Arc::clone(&audit),
+        }))
+        .with(Arc::new(PruneNotices {
             notices: Arc::clone(&notices),
         })),
     );
@@ -363,18 +634,62 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         xops_xforge::tools::register(registry, &xforge)?;
     }
 
+    // ① 求值链。**接上它，一行写进结算表才会真的去结算**——
+    // 在这之前 `Evaluate` 没有任何生产实现，整个流程引擎是惰性的。
+    late_chain.fill(Arc::new(
+        xops_settle::Chain::new(
+            Arc::clone(&flows),
+            Arc::clone(&tables),
+            Arc::new(xops_settle::Evaluator::new(
+                Arc::clone(&flows),
+                Arc::new(xops_settle::WriterCheck::new(
+                    Arc::clone(&directory),
+                    Arc::clone(&tables),
+                )),
+            )),
+            Arc::clone(&clock),
+        )
+        .with_plugins(Arc::new(TransitionPlugins {
+            plugins: Arc::clone(&plugins),
+        }))
+        .with_notices(Arc::new(NotSettled {
+            notices: Arc::clone(&notices),
+        })),
+    ));
+
+    // ⑦ 关系投影是缓存：**存量库升上来时它们是空的**，开机重放一次。
+    //    新库上这三次都是 0 行，代价可忽略;而少了它，审计查不到、按主体找不到。
+    for (what, count) in [
+        ("audit", audit.rebuild_index()?),
+        ("flow_instances", flows.rebuild_instances()?),
+        ("notices", notices.rebuild()?),
+    ] {
+        if count > 0 {
+            xops_core::log::info(
+                "assemble.rebuilt",
+                &[("relation", what), ("rows", &count.to_string())],
+            );
+        }
+    }
+
     // ⑨ 只读 Web 面。**前端产物随二进制发行**（`D55`），部署方不需要 Node。
     let sessions = Arc::new(Sessions::new(Arc::clone(&store), Arc::clone(&clock)));
     let assets = config
         .assets
         .clone()
         .map_or_else(Assets::embedded, Assets::at);
-    let web = Arc::new(WebServer::new(
-        Arc::clone(&model),
-        Arc::clone(&directory),
-        sessions,
-        assets,
-    ));
+    // ③ webhook 的落点。**没接就等于事件掉进地里**——路由在、验签在、什么也不发生。
+    let web = Arc::new(
+        WebServer::new(Arc::clone(&model), Arc::clone(&directory), sessions, assets).with_webhooks(
+            Arc::new(GitWebhooks {
+                repos: Arc::clone(&repos),
+                tasks: Arc::clone(&tasks),
+                dispatcher: Arc::clone(&dispatcher),
+                secret: config.webhook_secret.clone(),
+                clock: Arc::clone(&clock),
+            }),
+        ),
+    );
 
     Ok(Assembled {
         mcp: Arc::new(mcp),
@@ -384,6 +699,10 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         notices,
         dispatcher,
         reaper,
+        ticker,
+        keeper,
+        flows,
+        clock,
         directory,
     })
 }

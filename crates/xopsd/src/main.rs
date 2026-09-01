@@ -38,10 +38,6 @@ fn main() -> ExitCode {
 
 /// 停止 accept 之后，给在途请求多久收尾。
 const DRAIN: Duration = Duration::from_secs(3);
-/// 多久扫一遍"跑完但还没落账"的执行。
-///
-/// ⚠️ 它是**账变得可见的延迟上限**:执行结束到 `_runs` 出现那一行之间就是这么久。
-const REAP_EVERY: Duration = Duration::from_millis(500);
 
 fn help() -> &'static str {
     "xopsd —— XOps 服务端\n\
@@ -64,7 +60,8 @@ fn help() -> &'static str {
        XOPS_MODEL_KEY         模型 API key。**不给就跑桩引擎**\n  \
        XOPS_MODEL             默认模型，默认 claude-sonnet-4-6\n  \
        XOPS_MODEL_BASE_URL    模型服务地址（兼容 Anthropic Messages 的任何一个）\n  \
-       XOPS_LOG               off / error / warn / info / debug，默认 info\n"
+       XOPS_LOG               off / error / warn / info / debug，默认 info\n  \
+       XOPS_WEBHOOK_SECRET    Git webhook 的验签密钥。**不给就等于 webhook 不通**\n"
 }
 
 /// 给一个账号签一把 MCP 令牌。**第一把令牌只能这样来。**
@@ -198,26 +195,9 @@ fn run(check_only: bool) -> ExitCode {
         thread::spawn(move || server.serve_listener_until(&web_listener, &stopping))
     };
 
-    // 落账循环。**执行跑完之后是它把 `_runs` 那一行写下来**——
-    // 触发那条路非阻塞（`EXE-021`），所以没有别人在等着做这件事。
-    {
-        let reaper = Arc::clone(&assembled.reaper);
-        let stopping = Arc::clone(&stopping);
-        thread::spawn(move || {
-            while !stopping.load(std::sync::atomic::Ordering::Relaxed) {
-                match reaper.sweep() {
-                    Ok(landed) if landed > 0 => {
-                        log::info("xopsd.landed", &[("runs", &landed.to_string())]);
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        log::error("xopsd.reaper", &[("error", &format!("{error}"))]);
-                    }
-                }
-                thread::sleep(REAP_EVERY);
-            }
-        });
-    }
+    // 后台那几件事：落账 · 定时 · 到期 · 保留期。
+    // **没有人在等它们，所以必须有人定期去做**——这一整类断点是这么补上的。
+    let background = xopsd::background::spawn(&assembled, &stopping);
 
     log::info(
         "xopsd.started",
@@ -245,6 +225,10 @@ fn run(check_only: bool) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+    }
+
+    for handle in background {
+        let _ = handle.join();
     }
 
     // ⚠️ **在途请求在各自的线程上，这里给它们一个有界的窗口**——

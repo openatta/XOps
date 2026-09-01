@@ -699,13 +699,17 @@ fn approvals无主体表且理由必填由插件承接() {
             .plugins
             .resolve(scene.project, "approvals", 1)
             .unwrap();
-        let judge = |rows: Value| {
+        // ⚠️ **判的是这一行**，不是表里所有行：插件替代的是 `FLW-026` ①
+        // "满足筛选"那一半，而那一条是对**刚写进来的这一行**说的。
+        // 拿 related 聚合会把已经被平台否掉的行（职责分离、重复表态……）
+        // 也算进来 —— 那些行留在表里，但不结算任何节点。
+        let judge = |row: Value| {
             evaluate_transition(
                 &plugin,
                 &TransitionInput {
                     instance: json!({}),
-                    row: json!({}),
-                    related: rows,
+                    row,
+                    related: json!([]),
                 },
                 &approvals,
                 None,
@@ -716,24 +720,51 @@ fn approvals无主体表且理由必填由插件承接() {
 
         // **空理由被拒**——不结算（TPL-006）。
         assert_eq!(
-            judge(json!([{"decision": "批准", "reason": ""}])),
+            judge(json!({"decision": "批准", "reason": ""})),
             PluginVerdict::Fail,
             "{label}：决策必须附带理由"
         );
         assert_eq!(
-            judge(json!([{"decision": "批准", "reason": "   "}])),
+            judge(json!({"decision": "批准", "reason": "   "})),
             PluginVerdict::Fail,
             "{label}：全是空白也不算"
         );
         assert_eq!(
-            judge(json!([{"decision": "批准", "reason": "看过了"}])),
+            judge(json!({"decision": "批准", "reason": "看过了"})),
             PluginVerdict::Pass,
             "{label}"
         );
         assert_eq!(
-            judge(json!([{"decision": "驳回", "reason": "预算不够"}])),
+            judge(json!({"decision": "驳回", "reason": "预算不够"})),
             PluginVerdict::Reject,
             "{label}"
+        );
+
+        // ⚠️ **被否掉的行不许替别人投票。**
+        // 这是真跑一遍才撞出来的：a 自批（职责分离否掉、行留在表里）→
+        // b 写一条没有理由的驳回 → 插件扫 related 看见 a 那条有理由的批准 →
+        // 整个实例判成"通过"。审批的价值当场归零，而且没有任何一处报错。
+        let judge_with_related = |row: Value, related: Value| {
+            evaluate_transition(
+                &plugin,
+                &TransitionInput {
+                    instance: json!({}),
+                    row,
+                    related,
+                },
+                &approvals,
+                None,
+            )
+            .unwrap()
+            .verdict
+        };
+        assert_eq!(
+            judge_with_related(
+                json!({"decision": "驳回"}),
+                json!([{"decision": "批准", "reason": "别人写的，而且已经被否掉了"}]),
+            ),
+            PluginVerdict::Fail,
+            "{label}：别的行不能替这一行做决定"
         );
 
         // 而且平台自己**不认识「理由」这个概念**：reason 列不是必填的。

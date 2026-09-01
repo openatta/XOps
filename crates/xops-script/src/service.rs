@@ -280,6 +280,22 @@ impl Plugins {
         Ok(plugin)
     }
 
+    /// 按名字取**已安装的最新一版**。
+    ///
+    /// ⚠️ **流程节点引用的是固定版本，不跟随最新**（`PLG-009`）——
+    /// 这个方法是给"节点只写了插件名"那条路用的兜底，
+    /// 节点写清了版本时该走 [`Self::resolve`]。
+    ///
+    /// # Errors
+    /// 没有已安装的版本。
+    pub fn resolve_latest(&self, project: ProjectId, name: &str) -> Result<Plugin> {
+        self.all(project)?
+            .into_iter()
+            .filter(|plugin| plugin.name == name && plugin.usable())
+            .max_by_key(|plugin| plugin.version)
+            .ok_or_else(|| Error::not_found(format!("{name} 没有已安装的版本，引用不了")))
+    }
+
     // ——————————————————————————————— 配置 ———————————————————————————————
 
     /// 写一份配置（`PLG-015`）。**项目所有者。**

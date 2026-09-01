@@ -7,6 +7,7 @@
 
 pub mod cleanup;
 pub mod concurrency;
+pub mod keeper;
 pub mod landing;
 pub mod policy;
 pub mod retention;

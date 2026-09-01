@@ -1,0 +1,22 @@
+[package]
+name = "xops-repo"
+description = "Git 仓绑定 · 只读凭据 · 按确切修订准备只读工作区。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+getrandom.workspace = true
+chacha20poly1305.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

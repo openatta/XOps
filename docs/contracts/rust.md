@@ -632,3 +632,68 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   "把 socket 或 token 暴露出去，等同于暴露模型凭据本身"。裸跑下 `EXE-015` 靠的就是这条：
   凭据在 attacored 那一侧，执行方手里没有通往它的路径。
 - ⚠️ **不要自己拼 socket 路径去猜**——daemon 换启动参数重启时它会变。
+
+### Element: rust:xops-repo#Sealer
+- module: xops-repo
+- consumers: [xopsd]
+- 只读凭据的**可逆**加密（ChaCha20-Poly1305）。
+- ⚠️ **它与访问令牌不是一回事**：令牌存单向摘要（`TOK-002`），因为系统只需要"对不对得上"；
+  仓凭据拉取时要用原文，所以必须可逆。**两者共用一套做法是这一处最容易犯的错。**
+- 密钥从部署侧来（`XOPS_SECRET_KEY`）。边界说清楚：**加密防的是"库被拷走"，不是"部署被攻陷"**。
+
+### Element: rust:xops-repo#Secret
+- module: xops-repo
+- consumers: [xops-repo]
+- 凭据原文。不实现 `Serialize`、`Debug` 不打印内容——想把它存下来或记进日志的每条路
+  都得先绕过这个类型。
+
+### Element: rust:xops-repo#GitPlatform
+- module: xops-repo
+- consumers: [RP-13]
+- `RPO-007`：**平台差异收在一个接口后面**——认证、克隆、权限元数据校验、webhook 签名验证。
+- `probe_write_access` 是 `RPO-002` 的落点：**实际推一次 `--dry-run`**，判定是真的、副作用是没有的。
+  声明会撒谎，也会过期。
+- ⚠️ **分不清是不是只读时一律报错，不猜**：只有"被拒绝"才算只读，"仓不存在""连不上"不算。
+- `verify_webhook` 留给 RP-13（GitHub 的 `X-Hub-Signature-256`，HMAC-SHA256 + 等时比较）。
+
+### Element: rust:xops-repo#Binding
+- module: xops-repo
+- consumers: [RP-11, RP-19]
+- `RPO-001`：**当前绑一个**。`RPO-014`：**XForge 的登记挂在它上面，不另开一套对象**——
+  `xforge` 那个位已经留好，内容归 RP-19。
+- 远端地址里**不许带凭据**：`https://token@host/x.git` 会让凭据跟着 URL 进日志、
+  进错误消息、进 `git remote -v`。
+
+### Element: rust:xops-repo#Repos
+- module: xops-repo
+- consumers: [RP-11]
+- 绑定 · 轮换 · 解绑 · 查状态 · **按确切修订备只读工作区**。
+- `repo.status` 的响应里**没有 credential 字段，也不会有**（`RPO-003`）。
+- `RPO-006`：**每次使用凭据访问仓库都留一条**——哪个项目、哪个仓、拉了什么修订。
+
+### Element: rust:xops-repo#Workspace
+- module: xops-repo
+- consumers: [RP-07, RP-11]
+- 一份备好的只读工作区。**析构即销毁。**
+- `RPO-010`：`revision()` 是**确切**修订——"这份报告针对哪版代码"靠它回答。
+- ⚠️ **修订不存在时明确失败，不静默用 HEAD 顶替**。这是 `XFG` 那句"gitHead 必须已推送"
+  的落点：顶替一次，追溯链就断了，而且断得看不出来。
+
+### Element: rust:xops-repo#AuthConfig
+- module: xops-repo
+- consumers: [xops-repo]
+- **凭据只活在一个 0600 的临时 git 配置文件里，用完即删**（`RPO-005`）。
+- 为什么不是环境变量、不是命令行参数：`ps` 看得见 argv，子进程整个继承环境变量。
+- 残留风险认下来：**拉取期间它在磁盘上**。它不进 argv、不进环境、不进过程记录，
+  但它确实在那儿几秒钟。
+
+### Element: rust:xops-repo#Budget
+- module: xops-repo
+- consumers: [RP-11]
+- 拉取的容量与时间上限（`RPO-011`）。超限失败并明确报告，不允许无限制占用。
+
+### Element: rust:xops-repo#Deps
+- module: xops-repo
+- consumers: [xopsd]
+- 写入路径 · 存储 · 审计 · 身份 · 时钟。**它们总是一起出现**，摊成五个参数
+  调用处就会开始靠位置记顺序。

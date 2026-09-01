@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec"]
+members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo"]
 
 [workspace.package]
 version = "0.1.0"
@@ -25,6 +25,8 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # 令牌：32 字节 CSPRNG 取原文，SHA-256 存摘要（TOK-002 不可逆）。
 getrandom = "0.3"
 sha2 = "0.10"
+# 只读仓凭据是**可逆**加密（拉取时要用原文），与令牌的单向摘要不是一回事。
+chacha20poly1305 = "0.10"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

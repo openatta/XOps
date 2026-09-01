@@ -470,6 +470,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "xops-exec"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xops-core",
+]
+
+[[package]]
 name = "xops-identity"
 version = "0.1.0"
 dependencies = [

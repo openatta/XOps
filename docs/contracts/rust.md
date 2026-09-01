@@ -547,3 +547,88 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - `web/dist` 不在时嵌一张空表，`cargo build` 照样过，但**会打一条 warning**：
   它不该悄悄地过。
 - `Assets::Directory` 是开发时的形态：改一行页面不用重编 Rust。
+
+### Element: rust:xops-exec#ExecContract
+- module: xops-exec
+- consumers: [RP-11]
+- **XOps 与执行引擎之间唯一的接缝**（`EXE-014`）。四个方法：`submit` / `status` / `cancel` / `collect`。
+- ⚠️ **契约里不出现引擎的任何类型。** 这条有硬验收——换一个毫不相干的引擎进去，
+  上面的一切不改一行；还有一个测试直接扫这个模块的源码，确认它没漏进 `attacore` 这类词。
+- `EXE-021`：**提交即返回**。引擎不可用**不在 `submit` 上报错**——那是一次失败的执行，
+  不是一次失败的提交（`EXE-030`）。
+
+### Element: rust:xops-exec#Worksheet
+- module: xops-exec
+- consumers: [RP-11]
+- 派工单：执行契约的输入。**本包不装配它，只校验它**。
+- ⚠️ **表数据不在这里**（`EXE-013` / D44）：技能读不到表，需要表数据的由调用方
+  经 MCP 查好、作为 `inputs` 传进来。这也是本包能第一天独立开工的原因。
+
+### Element: rust:xops-exec#Capabilities
+- module: xops-exec
+- consumers: [RP-11, RP-08]
+- 这次执行能碰到什么。**未声明的一律不提供**（`EXE-006`）；网络白名单**空表示不许出网**（`EXE-007`）。
+
+### Element: rust:xops-exec#Limits
+- module: xops-exec
+- consumers: [RP-10, RP-11]
+- 超时 · token 预算（`TSK-005`）· 内存上限。
+
+### Element: rust:xops-exec#FailureKind
+- module: xops-exec
+- consumers: [RP-11, RP-12]
+- **八类，一个都不能少**（`EXE-020`）。落 `_runs.failureKind`。
+- `worth_retrying()` 是调用方决定要不要重跑的唯一依据。
+
+### Element: rust:xops-exec#Outcome
+- module: xops-exec
+- consumers: [RP-11, RP-12]
+- 产出 · 过程记录（`EXE-022`）· token 用量 · 起止时刻。**本包产生并移交，不负责持久化。**
+
+### Element: rust:xops-exec#Engine
+- module: xops-exec
+- consumers: [xops-exec 内部]
+- `Runtime` 与具体引擎之间的口子。**不是对外契约**——对外那条里不出现引擎。
+- `healthy()` 是 `EXE-030` 的依据；`run()` 必须盯着 `Cancel`，因为
+  "超时终止不得留下孤儿会话继续消耗模型额度"只有引擎这一侧做得到。
+
+### Element: rust:xops-exec#Runtime
+- module: xops-exec
+- consumers: [RP-11]
+- 把同步的引擎变成异步的契约，并守四条：提交即返回 · 引擎不可用不就地跑 ·
+  超时强制终止 · **引擎崩了或卡死也要在有限时间内收摊**（`EXE-017`）。
+- 最后一条落成两样：工作线程外面套 `catch_unwind`，加一个到点必收摊的看门狗
+  （`GRACE_MILLIS`）。**没有任何一条路径能让一次执行永远停在 running 上。**
+
+### Element: rust:xops-exec#StubEngine
+- module: xops-exec
+- consumers: [各包的测试]
+- **不是玩具，是 `EXE-014` 的硬验收载体**——与 `CON-012` 的内存存储是同一种验收
+  放在两个接缝上（G12）。
+
+### Element: rust:xops-exec#IsolationLevel
+- module: xops-exec
+- consumers: [RP-11, RP-12, 部署方]
+- **这条元素是本次最重要的一条。**
+- `unsatisfied()` 逐条列出当前隔离级别**没有兑现**的需求，`still_held()` 列出不靠容器
+  也成立的那些。两张表都有测试盯着，且不许有交集。
+- 这是 `EXE-029` 那句"**沙箱不静默降级：兑现不了的逐条如实上报，绝不当作已兑现**"
+  的落法——把它写成数据而不是散在注释里，是为了让它不会悄悄消失。
+
+### Element: rust:xops-exec#BareBackend
+- module: xops-exec
+- consumers: [xopsd]
+- 裸跑后端：四个执行契约（Process / FileSystem / Network / Sandbox）的裸跑实现。
+- ⚠️ `NetworkProvider::enforced()` 返回 `false`：**白名单只被记录，没有被强制**。
+  把这件事做成一个能问的方法，是为了让调用方不会以为它生效了。
+
+### Element: rust:xops-exec#AttaCoreEngine
+- module: xops-exec
+- consumers: [xopsd]
+- 接 `attacored`：NDJSON over Unix socket，一行一个 JSON-RPC 2.0 对象。
+- `EXE-016` 在这里兑现：**一次执行一个会话，用完即弃**，会话 id 进过程记录——
+  所以"第二次读不到第一次的痕迹"是**实测得到的**，不是看代码看出来的。
+- ⚠️ **socket 路径与令牌绝不进派工单。** AttaCore 自己的文档把话说死了：
+  "把 socket 或 token 暴露出去，等同于暴露模型凭据本身"。裸跑下 `EXE-015` 靠的就是这条：
+  凭据在 attacored 那一侧，执行方手里没有通往它的路径。
+- ⚠️ **不要自己拼 socket 路径去猜**——daemon 换启动参数重启时它会变。

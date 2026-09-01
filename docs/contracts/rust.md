@@ -1149,3 +1149,48 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-script
 - consumers: [RP-15]
 - **交回、由平台代写的行不再触发插件求值**——自激回路从这里断掉（`PLG-013`、`I-R`）。
+
+### Element: rust:xops-notice#SourceEvent
+- module: xops-notice
+- consumers: [RP-10, RP-12, RP-15, RP-19]
+- 派生通知的那几个事件。**每一个变体都对应一个已经发生、已经留痕的事实**——
+  想加一类通知，先要有一个已存在的事件，反过来不行（`NTF-002`）。
+- `RunFinished.after_failure` 接住 `TSK-012`：**`_runs` 那一行已经写好了**，
+  后处理失败只留自己的痕迹并通知任务所有者，不改执行本身的结论。
+
+### Element: rust:xops-notice#Kind
+- module: xops-notice
+- consumers: [RP-05, RP-06]
+- 值得通知的**五类**（`NTF-007`）。其中"我写的行未被采纳"是
+  **自动化失灵时唯一的信号**——没有它，一个写了行却没被采纳的人不会知道自己白写了。
+
+### Element: rust:xops-notice#Notice
+- module: xops-notice
+- consumers: [RP-05, RP-06]
+- 一条通知。**没有公开的构造函数**——唯一造得出它的地方是 `from_event`，
+  `NTF-002` 那句"不引入独立的产生路径"在这里是**可见性上的**，不是一句约定。
+
+### Element: rust:xops-notice#from_event
+- module: xops-notice
+- consumers: [RP-10, RP-12, RP-15, RP-19]
+- 从一个事件派生出该发的那些通知。**内容由确定性代码生成，不经模型**（`NTF-003`、`G8`）：
+  本 crate 连执行域都不依赖，**没有一条能调到模型的边**。
+- 自由文本**原样引用或截断**，不改写、不摘要、不翻译（`NTF-004`、`G7`）。
+- **不含凭据、令牌或产物原文，只含指针**（`NTF-006`）——落法是结构上的：
+  `SourceEvent` 里没有装它们的字段。
+
+### Element: rust:xops-notice#Notices
+- module: xops-notice
+- consumers: [RP-10, RP-12, RP-15, RP-19, xopsd]
+- 通知的写入与读取。
+- ⚠️ **`notify` 的返回类型里没有 `Result`**——它交回一组 `Failure`。
+  这是 `NTF-008` 的落法：调用方**拿不到一个能用 `?` 把业务写带崩的东西**，
+  于是"通知的失败绝不影响产生该事件的业务操作"成为**结构保证**，
+  而不是"几乎不会失败"这种概率话术（`I-W`）。
+- `unread` 没有"看别人的"那个参数；`mark_read` 写下去的 patch 里**只有 `readAt`**。
+
+### Element: rust:xops-notice#Retention
+- module: xops-notice
+- consumers: [xopsd]
+- `_notices` 自己的保留期：**平台级配置，默认 3 个月**，与任务无关（`RET-008`）。
+  清理**整批按时间进行**（`RET-005`）。

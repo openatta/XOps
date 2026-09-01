@@ -413,3 +413,17 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - consumers: [agent]
 - 看这份配置有哪几个键。**只有键名，没有值——包括所有者自己也读不出原文**（`I-A`）。
 - 它只在调用那一刻注入给这个插件自己，**且只在它声明了这项能力时**。
+
+### Element: api:mcp.tool.notice.unread
+- module: xops-notice
+- consumers: [agent]
+- 查我的未读通知。**跨项目一起给**——"我在 N 个项目里的待办"在一个地方看得到（`NTF-014`）。
+- ⚠️ **schema 里没有 `user` 字段**：读写被硬限定为 `user = 令牌持有人`（`NTF-010`），
+  所以"看别人的"**表达不出来**，不是被拒绝。
+
+### Element: api:mcp.tool.notice.read
+- module: xops-notice
+- consumers: [agent]
+- 把一条通知标记为已读。**只能改自己那一行、只能改 `readAt` 这一列**，
+  且**照样追加事件**（`NTF-011`、`I-N`）。
+- 不是自己的那一条**与"不存在"完全一致**——不告诉调用方它存在。

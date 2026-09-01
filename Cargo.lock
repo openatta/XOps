@@ -966,6 +966,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "xops-notice"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xops-audit",
+ "xops-core",
+ "xops-identity",
+ "xops-mcp",
+ "xops-read",
+ "xops-store",
+ "xops-table",
+]
+
+[[package]]
 name = "xops-read"
 version = "0.1.0"
 dependencies = [

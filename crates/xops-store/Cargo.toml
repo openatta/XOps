@@ -1,0 +1,16 @@
+[package]
+name = "xops-store"
+description = "存储契约（只基本 CRUD）+ SQLite 实现 + 内存实现 + 表级写串行的四步区间。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+
+[lints]
+workspace = true

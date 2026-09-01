@@ -1,0 +1,14 @@
+[package]
+name = "xops-core"
+description = "类型 · ID · 时间 · 错误 · 事件形状 · 角色。L0，不依赖任何别的 xops crate。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

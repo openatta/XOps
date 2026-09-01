@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["crates/xops-core", "crates/xops-store"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/openatta/XOps"
+
+[workspace.dependencies]
+xops-core = { path = "crates/xops-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# rusqlite 只允许出现在 xops-store 里。CON-012 的分界线就在这一行 ——
+# 见 crates/xops-store/tests/no_sqlite_outside_store.rs，它会枚举全仓来证明这件事。
+rusqlite = { version = "0.40", features = ["bundled"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "deny"

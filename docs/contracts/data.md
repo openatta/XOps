@@ -48,4 +48,39 @@ sql:meta.projection.<规则>           事件到当前视图的投影规则
 
 ## Elements
 
-(none)
+### Element: sql:table.kv
+- module: xops-store
+- consumers: [xops-store]
+- 物理 schema **只有一张表**：`kv(space TEXT, key BLOB, value BLOB, PRIMARY KEY(space, key)) WITHOUT ROWID`。
+- 业务上的"表"不是数据库里的表——它是键的前缀。换库时要建的东西因此只有这一张。
+- `WITHOUT ROWID` 是**性能选择不是能力依赖**：去掉它一切照常工作。
+
+### Element: sql:table.kv.column.space
+- module: xops-store
+- consumers: [xops-store]
+
+### Element: sql:table.kv.column.key
+- module: xops-store
+- consumers: [xops-store]
+
+### Element: sql:table.kv.column.value
+- module: xops-store
+- consumers: [xops-store]
+
+### Element: sql:layout.event-key
+- module: xops-store
+- consumers: [全部]
+- `event` 空间：`表名 \0 序号(8 字节大端)`。按键升序扫就是按序号升序读。
+
+### Element: sql:layout.row-key
+- module: xops-store
+- consumers: [全部]
+- `row` 空间：`表名 \0 行 ID(16 字节)`。存的是投影，**软删是墓碑不是删键**。
+
+### Element: sql:layout.watermark
+- module: xops-store
+- consumers: [xops-store]
+- `meta` 空间两个水位：`seq`（事件写到第几条）与 `applied`（投影放到第几条）。
+- **`applied` 可以落后于 `seq`，那正是它存在的理由**：没有事务，事件与投影之间会崩。
+  补法是重放不是回滚——**事件是真相，投影是它的缓存**。区间开始时对锁集合里每张表修一次，
+  正常情况下只多花一次 `get`。

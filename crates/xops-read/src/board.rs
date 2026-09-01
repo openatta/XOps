@@ -39,34 +39,12 @@ impl std::fmt::Display for BoardId {
 }
 
 /// 一条筛选。**只有等值与非空两种**——再多就开始像查询语言了。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "kebab-case")]
-pub enum Filter {
-    /// 某一列等于某个值。
-    Equals {
-        column: String,
-        value: serde_json::Value,
-    },
-    /// 某一列有值。
-    Present { column: String },
-}
-
-impl Filter {
-    #[must_use]
-    pub fn column(&self) -> &str {
-        match self {
-            Self::Equals { column, .. } | Self::Present { column } => column,
-        }
-    }
-
-    #[must_use]
-    pub fn matches(&self, row: &serde_json::Value) -> bool {
-        match self {
-            Self::Equals { column, value } => row.get(column) == Some(value),
-            Self::Present { column } => row.get(column).is_some_and(|found| !found.is_null()),
-        }
-    }
-}
+///
+/// ⚠️ **它定义在 `xops-table` 的查询面上，这里只是转出去。**
+/// 理由是看板的筛选与"从表里取哪些行"是同一件事：定义两份，
+/// 将来把它推到索引或 `WHERE` 上的那天就要推两次，而两份总会漂。
+/// serde 形态一个字节没变——`_boards` 里存着的历史看板照常读得回来。
+pub use xops_table::Filter;
 
 /// 排序方向。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

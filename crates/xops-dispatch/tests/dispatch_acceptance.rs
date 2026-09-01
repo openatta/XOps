@@ -226,6 +226,21 @@ fn wait_done(fixture: &Fixture, run: &str) {
 
 // ——————————————————————————————— 事件白名单 ———————————————————————————————
 
+/// 等一个条件成立，最多等两秒。
+///
+/// 用在"提交是非阻塞的"那几条上：被测的性质是**结果**，
+/// 而结果由另一个线程写下——不等就是在测调度器。
+fn wait_until(mut ready: impl FnMut() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        if ready() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    ready()
+}
+
 #[test]
 fn 订阅某张表被写入会在创建时被拒() {
     let fixture = fixture();
@@ -310,6 +325,13 @@ fn 同一个外部事件不产生第二次执行() {
         panic!("第二次该是重复，不是第二次执行");
     };
     assert_eq!(first, second, "TRG-013：返回同一次执行");
+    // ⚠️ 提交是非阻塞的（`TRG-007`）：引擎在另一个线程上被调到。
+    // 直接断言 `seen()` 是一个竞态——它挂在"那个线程还没跑起来"上，
+    // 而不是挂在被测的性质上。**等它到 1，再断言不会变成 2。**
+    assert!(
+        wait_until(|| !fixture.engine.seen().is_empty()),
+        "引擎该被调到一次"
+    );
     assert_eq!(fixture.engine.seen().len(), 1, "引擎只被调过一次");
 }
 

@@ -14,12 +14,17 @@ use xops_identity::{Action, Directory, ProjectId, UserId};
 use xops_store::{PreWrite, Row, SchemaCheck, Store, WriteEngine, WriteRequest, keys, space};
 
 use crate::column::{Column, ColumnType, render_template};
+use crate::query::{Filter, Page, Query, matches_all};
 use crate::system;
 use crate::table::{Kind, Protection, TableId, TableSchema, physical_name};
 use crate::writtenby::WrittenBy;
 
 /// 表目录落在这张平台表上。**它不是那五张系统表之一**，用户看不到它。
 pub const CATALOG_TABLE: &str = "_tables";
+
+/// 一次向存储要多少行。**这是分页粒度，不是结果上限**——
+/// 上限由调用方的 `limit` 或 `ceiling` 说了算。
+const SCAN_PAGE: usize = 256;
 /// 自增序号的计数器。
 const SEQUENCE_SPACE: &str = "table-seq";
 
@@ -609,7 +614,104 @@ impl Tables {
         Ok(self.read_values(&schema, row)?.map(Value::Object))
     }
 
-    /// 列出一张表的行。
+    /// 翻一页（`Query`）。**按行 ID 序，也就是写入序。**
+    ///
+    /// 内存有界：一次只攒 `limit` 行。要排序或者要全部命中，用 [`Self::query_all`]。
+    ///
+    /// # Errors
+    /// 表不存在或底层不可用。
+    pub fn query(&self, project: Option<ProjectId>, name: &TableId, query: &Query) -> Result<Page> {
+        let schema = self.require(project, name)?;
+        let physical = schema.physical()?;
+        let prefix = keys::table_prefix(&physical);
+        let mut cursor: Option<Vec<u8>> = query.after.map(|row| keys::row(&physical, row));
+        let mut rows = Vec::new();
+
+        while rows.len() < query.limit {
+            let page = self
+                .store
+                .scan(space::ROW, &prefix, cursor.as_deref(), SCAN_PAGE)?;
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.last().map(|(key, _)| key.clone());
+            for (_, bytes) in page {
+                let Some(stored) = Self::live_row(&bytes)? else {
+                    continue;
+                };
+                if !matches_all(&query.filters, &stored.1) {
+                    continue;
+                }
+                rows.push(stored);
+                if rows.len() >= query.limit {
+                    break;
+                }
+            }
+        }
+        // 填满了就给一个游标。**"可能还有"比"少给一页"安全。**
+        let next = (rows.len() >= query.limit && query.limit > 0)
+            .then(|| rows.last().map(|(row, _)| *row))
+            .flatten();
+        Ok(Page { rows, next })
+    }
+
+    /// 把**全部命中**取回来。
+    ///
+    /// 要排序、要计数、要"这个实例的所有结算行"——都得用它，
+    /// 因为那几件事在拿到全部命中之前答不出来。
+    ///
+    /// `ceiling` 是**扫描上限**（扫过的行数，不是命中的行数）：
+    /// **超了明确失败，绝不截断**。真撞上了，正确的动作是给那一列加一条索引，
+    /// 不是把这个数字调大。
+    ///
+    /// # Errors
+    /// 表不存在 · 底层不可用 · **扫描量超过 `ceiling`**。
+    pub fn query_all(
+        &self,
+        project: Option<ProjectId>,
+        name: &TableId,
+        filters: &[Filter],
+        ceiling: usize,
+    ) -> Result<Vec<(RowId, Value)>> {
+        let schema = self.require(project, name)?;
+        let physical = schema.physical()?;
+        let prefix = keys::table_prefix(&physical);
+        let mut cursor: Option<Vec<u8>> = None;
+        let mut scanned = 0usize;
+        let mut out = Vec::new();
+
+        loop {
+            let page = self
+                .store
+                .scan(space::ROW, &prefix, cursor.as_deref(), SCAN_PAGE)?;
+            if page.is_empty() {
+                return Ok(out);
+            }
+            cursor = page.last().map(|(key, _)| key.clone());
+            for (_, bytes) in page {
+                scanned += 1;
+                if scanned > ceiling {
+                    return Err(Error::invalid(format!(
+                        "{name} 要扫的行超过 {ceiling} 条，停下了。\
+                         **这里不截断**——截断会安静地给出一个错误答案（留下的是最老的那一批）。\
+                         要么把筛选收窄，要么给这一列加一条索引"
+                    )));
+                }
+                let Some(stored) = Self::live_row(&bytes)? else {
+                    continue;
+                };
+                if matches_all(filters, &stored.1) {
+                    out.push(stored);
+                }
+            }
+        }
+    }
+
+    /// 列出一张表的**前 `limit` 行**。
+    ///
+    /// ⚠️ **它给的是最老的那一批**：行 ID 时间有序，扫描按行 ID 升序。
+    /// 想要"最新的 N 条"或者"某个筛选的全部命中"，**用 [`Self::query_all`]**——
+    /// 拿这个方法配一个大 limit 去顶，就是那个会安静给出错误答案的写法。
     ///
     /// # Errors
     /// 表不存在或底层不可用。
@@ -619,32 +721,17 @@ impl Tables {
         name: &TableId,
         limit: usize,
     ) -> Result<Vec<(RowId, Value)>> {
-        let schema = self.require(project, name)?;
-        let physical = schema.physical()?;
-        let prefix = keys::table_prefix(&physical);
-        let mut out = Vec::new();
-        let mut cursor: Option<Vec<u8>> = None;
-        while out.len() < limit {
-            let page = self
-                .store
-                .scan(space::ROW, &prefix, cursor.as_deref(), 256)?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|(key, _)| key.clone());
-            for (_, bytes) in page {
-                let stored: Row = serde_json::from_slice(&bytes)
-                    .map_err(|error| Error::internal(format!("投影读不回来：{error}")))?;
-                if stored.is_deleted() {
-                    continue;
-                }
-                out.push((stored.row, stored.payload));
-                if out.len() >= limit {
-                    break;
-                }
-            }
+        Ok(self.query(project, name, &Query::first(limit))?.rows)
+    }
+
+    /// 一条投影读回来；软删的返回 `None`。
+    fn live_row(bytes: &[u8]) -> Result<Option<(RowId, Value)>> {
+        let stored: Row = serde_json::from_slice(bytes)
+            .map_err(|error| Error::internal(format!("投影读不回来：{error}")))?;
+        if stored.is_deleted() {
+            return Ok(None);
         }
-        Ok(out)
+        Ok(Some((stored.row, stored.payload)))
     }
 
     /// 一行的完整历史（`TBL-012`）。

@@ -103,10 +103,16 @@ impl WriterCheck {
         roster: &xops_table::TableId,
         user: UserId,
     ) -> Result<bool> {
-        let rows = self.tables.rows(Some(project), roster, 10_000)?;
-        Ok(rows.iter().any(|(_, values)| {
-            values.get("user").and_then(serde_json::Value::as_str) == Some(&user.to_string())
-        }))
+        // **名单表上的一次谓词查**，不是"扫前一万行再看看在不在里面"——
+        // 后者在名单表长过上限之后会把一个真在名单里的人判成不在，
+        // 而那条判定是审批权的元权限（`FLW-019`）。
+        let hit = self.tables.query_all(
+            Some(project),
+            roster,
+            &[xops_table::Filter::equals("user", user.to_string())],
+            xops_table::MAX_SCAN,
+        )?;
+        Ok(!hit.is_empty())
     }
 }
 

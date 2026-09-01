@@ -15,7 +15,7 @@ use xops_audit::{AuditEnvelope, AuditLog};
 use xops_core::{Actor, Clock, Error, Id, Result, Role, RowId, TableName, Timestamp, WriteOp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
 use xops_store::{Row, Store, WriteEngine, WriteRequest, keys, space};
-use xops_table::{TableId, Tables};
+use xops_table::{Filter, MAX_SCAN, TableId, Tables};
 
 use crate::board::{Board, BoardId, BoardSpec, Direction, check_boardable};
 
@@ -250,15 +250,18 @@ impl ReadModel {
         self.directory
             .authorize(viewer, definition.project, Action::ReadProject)?;
 
-        let mut rows: Vec<(RowId, Value)> =
-            self.tables
-                .rows(Some(definition.project), &definition.table, 10_000)?;
-        rows.retain(|(_, values)| {
-            definition
-                .filters
-                .iter()
-                .all(|filter| filter.matches(values))
-        });
+        // ⚠️ **筛选交给查询面，而不是「扫前一万行再过滤」。**
+        //
+        // 那个写法会安静地给出错误答案：行 ID 时间有序，截断留下的是**最老的一万条**，
+        // 而排序发生在截断**之后**——于是一个「最新在前」的看板会稳定显示最老的那一批。
+        // 排序要拿到全部命中才答得出来，所以这里用 `query_all`；
+        // 扫不动时它**明确失败**，不截断（`xops_table::MAX_SCAN`）。
+        let mut rows: Vec<(RowId, Value)> = self.tables.query_all(
+            Some(definition.project),
+            &definition.table,
+            &definition.filters,
+            MAX_SCAN,
+        )?;
         if let Some(sort) = &definition.sort {
             rows.sort_by(|left, right| {
                 let ordering = compare(left.1.get(sort), right.1.get(sort));
@@ -344,13 +347,17 @@ impl ReadModel {
     ) -> Result<Vec<SettlementView>> {
         self.directory
             .authorize(viewer, project, Action::ReadProject)?;
+        // 同上：**这是一个谓词，不是「前一万行里凑巧命中的那些」**。
+        // 一个新实例的结算行落在截断线之后时，旧写法会返回空——看起来像「没人表态」。
         Ok(self
             .tables
-            .rows(Some(project), table, 10_000)?
+            .query_all(
+                Some(project),
+                table,
+                &[Filter::equals("_instance", instance.to_string())],
+                MAX_SCAN,
+            )?
             .into_iter()
-            .filter(|(_, values)| {
-                values.get("_instance").and_then(Value::as_str) == Some(&instance.to_string())
-            })
             .map(|(row, values)| SettlementView {
                 table: table.as_str().to_owned(),
                 row: row.to_string(),

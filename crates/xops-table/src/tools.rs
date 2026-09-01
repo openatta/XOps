@@ -383,7 +383,11 @@ impl RowTool {
             }
         }
         if op.is_none() {
-            input = input.field(Field::optional("limit", FieldType::Integer, "最多取几行"));
+            input = input.field(Field::optional(
+                "limit",
+                FieldType::Integer,
+                "最多取几行。**按写入序给最老的那几行**，不是最新的；没有筛选也没有游标",
+            ));
         }
         let requirement = match op {
             Some(_) => Requirement::InProject(Tables::write_action(schema)),
@@ -462,6 +466,9 @@ impl Tool for RowTool {
                     .and_then(Value::as_i64)
                     .and_then(|limit| usize::try_from(limit).ok())
                     .unwrap_or(100);
+                // ⚠️ **这里给的是最老的 `limit` 行**（按写入序）。它没有筛选、没有游标——
+                // 想要"最新的"或者"某一列等于某值的"，现在只能自己翻。
+                // `Tables::query` 已经有游标了，把它接到这个 tool 上是下一步。
                 let rows = self.tables.rows(project, name, limit.min(1_000))?;
                 Ok(json!({
                     "rows": rows

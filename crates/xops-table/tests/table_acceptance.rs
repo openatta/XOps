@@ -10,7 +10,7 @@ use xops_mcp::{Capabilities, McpServer, WhoAmI};
 use xops_store::{MemoryStore, SqliteStore, Store, WriteEngine};
 use xops_table::engine::Catalog;
 use xops_table::table::{Kind, Protection, TableId};
-use xops_table::{Column, ColumnType, Tables, WrittenBy};
+use xops_table::{Column, ColumnType, Filter, MAX_SCAN, Query, Tables, WrittenBy};
 
 struct Fixture {
     label: &'static str,
@@ -829,5 +829,263 @@ fn 目录重建之后表还在() {
             listed.iter().any(|schema| schema.kind == Kind::System),
             "{label}：系统表也在"
         );
+    }
+}
+
+// ——————————————————————————————— 查询面 ———————————————————————————————
+//
+// 这一组盯的是一件具体的事：**"扫前 N 行再过滤"会安静地给出错误答案。**
+// 行 ID 是时间有序的，扫描按行 ID 升序，所以截断留下的是**最老的 N 条**——
+// 于是一个"最新在前"的看板会稳定显示最老的那一批，而没有任何地方报错。
+
+/// 往表里塞 `count` 行，第 `i` 行带 `title = 第i` 与 `flag = 偶/奇`。
+fn fill(fixture: &Fixture, owner: UserId, project: ProjectId, table: &TableId, count: usize) {
+    for index in 0..count {
+        fixture
+            .tables
+            .insert(
+                &WrittenBy::Person { user: owner },
+                Some(project),
+                table,
+                json!({
+                    "title": format!("第{index}"),
+                    "flag": if index % 2 == 0 { "偶" } else { "奇" },
+                }),
+            )
+            .unwrap();
+    }
+}
+
+fn flagged(fixture: &Fixture, owner: UserId) -> (ProjectId, TableId) {
+    let project = fixture.project(owner, "acme");
+    let name = TableId::user("notes").unwrap();
+    fixture
+        .tables
+        .create(
+            owner,
+            project,
+            name.clone(),
+            Protection::Normal,
+            vec![
+                Column::new("title", ColumnType::Text { max_len: 64 }, true).unwrap(),
+                Column::new("flag", ColumnType::Text { max_len: 8 }, false).unwrap(),
+            ],
+        )
+        .unwrap();
+    (project, name)
+}
+
+#[test]
+fn 游标翻得完整张表而不是停在第一页() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let alice = fixture.user("alice");
+        let (project, notes) = flagged(&fixture, alice);
+        fill(&fixture, alice, project, &notes, 25);
+
+        let mut seen = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = fixture
+                .tables
+                .query(Some(project), &notes, &Query::first(4).after(cursor))
+                .unwrap();
+            if page.is_empty() {
+                break;
+            }
+            seen.extend(page.rows.iter().map(|(_, values)| values["title"].clone()));
+            cursor = page.next;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(seen.len(), 25, "{label}：25 行要一行不少地翻完");
+        assert_eq!(seen[0], json!("第0"), "按写入序");
+        assert_eq!(seen[24], json!("第24"));
+    }
+}
+
+#[test]
+fn 命中在第一页之后的行也取得回来() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let alice = fixture.user("alice");
+        let (project, notes) = flagged(&fixture, alice);
+        fill(&fixture, alice, project, &notes, 40);
+
+        let hit = fixture
+            .tables
+            .query_all(
+                Some(project),
+                &notes,
+                &[Filter::equals("flag", "奇")],
+                MAX_SCAN,
+            )
+            .unwrap();
+        assert_eq!(hit.len(), 20, "{label}：命中不该被第一页截住");
+
+        // 而"扫前 N 行再过滤"看到的只有前 N 行里的那些 —— 这就是那个坑。
+        let truncated: Vec<_> = fixture
+            .tables
+            .rows(Some(project), &notes, 4)
+            .unwrap()
+            .into_iter()
+            .filter(|(_, values)| values["flag"] == json!("奇"))
+            .collect();
+        assert_eq!(
+            truncated.len(),
+            2,
+            "{label}：它只看得到最老的四行里的那两条"
+        );
+    }
+}
+
+#[test]
+fn 扫不动的时候明确失败而不是截断() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let alice = fixture.user("alice");
+        let (project, notes) = flagged(&fixture, alice);
+        fill(&fixture, alice, project, &notes, 30);
+
+        // 上限之内：全部命中。
+        assert_eq!(
+            fixture
+                .tables
+                .query_all(Some(project), &notes, &[], 100)
+                .unwrap()
+                .len(),
+            30,
+            "{label}"
+        );
+
+        // 超过上限：**报错，不是给一个短了的答案**。
+        let error = fixture
+            .tables
+            .query_all(Some(project), &notes, &[], 10)
+            .unwrap_err();
+        assert!(
+            error.message().contains("这里不截断"),
+            "{label}：截断会安静地给出错误答案，实际是 {error}"
+        );
+    }
+}
+
+#[test]
+fn rows给的是最老的那一批这件事被钉住了() {
+    // ⚠️ 这条不是在夸这个行为，是在**钉住它**：`rows` 就是"前 N 行"，
+    // 它的语义可以被依赖，但**不能拿它去顶"最新的 N 条"**。
+    // 哪天有人想"顺手让它返回最新的"，这条会拦住——那会悄悄改掉所有调用方的语义。
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let alice = fixture.user("alice");
+        let (project, notes) = flagged(&fixture, alice);
+        fill(&fixture, alice, project, &notes, 10);
+
+        let first_three = fixture.tables.rows(Some(project), &notes, 3).unwrap();
+        let titles: Vec<_> = first_three
+            .iter()
+            .map(|(_, values)| values["title"].clone())
+            .collect();
+        assert_eq!(
+            titles,
+            vec![json!("第0"), json!("第1"), json!("第2")],
+            "{label}：行 ID 时间有序 → 前 N 行就是最老的 N 行"
+        );
+    }
+}
+
+#[test]
+fn 软删的行不出现在任何一种读里() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let alice = fixture.user("alice");
+        let (project, notes) = flagged(&fixture, alice);
+        fill(&fixture, alice, project, &notes, 6);
+
+        let victim = fixture
+            .tables
+            .query(Some(project), &notes, &Query::first(1))
+            .unwrap()
+            .rows[0]
+            .0;
+        fixture
+            .tables
+            .delete(
+                &WrittenBy::Person { user: alice },
+                Some(project),
+                &notes,
+                victim,
+            )
+            .unwrap();
+
+        assert_eq!(
+            fixture
+                .tables
+                .query_all(Some(project), &notes, &[], MAX_SCAN)
+                .unwrap()
+                .len(),
+            5,
+            "{label}"
+        );
+        assert!(
+            !fixture
+                .tables
+                .query(Some(project), &notes, &Query::first(10))
+                .unwrap()
+                .rows
+                .iter()
+                .any(|(row, _)| *row == victim),
+            "{label}"
+        );
+    }
+}
+
+/// 那几处**曾经**"扫一个写死的上限再过滤"的读路径,现在都不是那么写的了。
+///
+/// 它们的失败形态是**静默的错误结果**——没有报错,只有一个短了的答案,
+/// 而短掉的那一半恰好是新的那一半。这条测试盯着它们不要长回来。
+#[test]
+fn 读路径不再拿写死的上限去顶谓词() {
+    let sites = [
+        (
+            "xops-read/board 与 settlements",
+            include_str!("../../xops-read/src/model.rs"),
+        ),
+        (
+            "xops-notice/unread",
+            include_str!("../../xops-notice/src/service.rs"),
+        ),
+        (
+            "xops-xforge/settling_row",
+            include_str!("../../xops-xforge/src/service.rs"),
+        ),
+        (
+            "xops-settle/in_roster",
+            include_str!("../../xops-settle/src/writers.rs"),
+        ),
+        (
+            "xops-script/plugins",
+            include_str!("../../xops-script/src/service.rs"),
+        ),
+    ];
+    for (what, source) in sites {
+        let body = source.split("#[cfg(test)]").next().unwrap();
+        for line in body.lines() {
+            if !line.contains(".rows(") {
+                continue;
+            }
+            // 剩下的 `.rows(` 只允许把调用方给的 limit 透下去，
+            // **不允许自己写一个大数字当上限**——那就是那个坑。
+            let has_big_literal = line
+                .split(|c: char| !(c.is_ascii_digit() || c == '_'))
+                .filter(|token| !token.is_empty())
+                .filter_map(|token| token.replace('_', "").parse::<usize>().ok())
+                .any(|number| number >= 500);
+            assert!(
+                !has_big_literal,
+                "{what}：又出现了「扫前 N 行再过滤」——{line}"
+            );
+        }
     }
 }

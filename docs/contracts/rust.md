@@ -442,12 +442,16 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-table#Tables
 - module: xops-table
-- consumers: [RP-05, RP-11, RP-12, RP-15, RP-16, RP-17, RP-18]
+- consumers: [RP-05, RP-11, RP-12, RP-15, RP-16, RP-17, RP-18, RP-19]
 - 目录与行的读写面。**写串行与四步区间归 RP-01，本包只是用它。**
 - 系统表**只有平台能写**：非 `WrittenBy::Platform` 的写当场被拒（`TBL-003`）。
 - `history()` **软删过的表照样查得到**（`TBL-026`）。
 - ⚠️ `history()` 扫的是整张表的事件流再按行过滤。表大了之后这里要一个按行的索引，
   而那个索引该建在这里，不是让调用方各自记一份。
+- **新增读的那一面**：`query`（翻页 + 游标）与 `query_all`（全部命中 + 扫描上限）。
+- ⚠️ **`rows(table, limit)` 给的是最老的 `limit` 行**（行 ID 时间有序，扫描按升序）。
+  它的语义可以被依赖，**但不能拿它去顶"最新的 N 条"或者"某个筛选的全部命中"**——
+  那个写法会**安静地给出错误答案**，因为截断掉的恰好是新的那一半。有测试钉着这条语义。
 
 ### Element: rust:xops-table#DropGuard
 - module: xops-table
@@ -487,6 +491,8 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-read
 - consumers: [xops-web]
 - **只有等值与非空两种。**
+- 它现在是 `rust:xops-table#Filter` 的转出。序列化形态一个字节没变——
+  `_boards` 里的历史看板照常读得回来。
 
 ### Element: rust:xops-read#ReadModel
 - module: xops-read
@@ -1318,3 +1324,33 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [xopsd]
 - 从十六进制文本取密钥。**密钥从哪来是装配的事，不是这个类型的事**——
   读环境变量那一步挪到进程边界上做，测试才好构造。`from_env` 现在走它。
+
+### Element: rust:xops-table#Query
+- module: xops-table
+- consumers: [RP-05, RP-15, RP-16, RP-17, RP-19]
+- 翻一页：一组筛选 + 一个上限 + **一个游标**。按**行 ID 序**，也就是写入序。
+- ⚠️ **这一层有意不是查询语言**：两个算子、一个游标，仅此而已。
+  再多就开始像 SQL 了,而平台不提供通用查询（`BRD-002`、`NTF-009`）。
+
+### Element: rust:xops-table#Filter
+- module: xops-table
+- consumers: [RP-05, RP-15, RP-16, RP-17, RP-19]
+- 一条筛选。**只有等值与非空两种。**
+- ⚠️ 它的 serde 形态是**看板定义落库的那个形态**（`_boards` 里存着），**不能改**。
+- 它从 `xops-read` 挪到这里：看板的筛选与"从表里取哪些行"是同一件事，
+  定义两份的话，把它推到索引或 `WHERE` 上的那天就要推两次，**而两份总会漂**。
+
+### Element: rust:xops-table#Tables::query
+- module: xops-table
+- consumers: [RP-05, RP-15, RP-16, RP-17, RP-19]
+- 翻一页，**内存有界**：一次只攒 `limit` 行。
+- 游标语义是"**可能还有**"而不是"一定还有"：最后一页正好填满时也给游标，
+  下一页才发现是空的。**这比少给一页安全。**
+
+### Element: rust:xops-table#Tables::query_all
+- module: xops-table
+- consumers: [RP-05, RP-15, RP-16, RP-17, RP-19]
+- 把**全部命中**取回来。要排序、要计数、要"这个实例的所有结算行"都得用它——
+  那几件事在拿到全部命中之前答不出来。
+- `ceiling` 是**扫描上限**（扫过的行数，不是命中的行数）：**超了明确失败，绝不截断**。
+  撞上了的正确动作是**给那一列加一条索引**，不是把这个数字调大（`MAX_SCAN`）。

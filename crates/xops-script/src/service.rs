@@ -17,7 +17,7 @@ use xops_core::{Actor, Clock, Error, Result, RowId, Timestamp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
 use xops_repo::{Sealer, Secret};
 use xops_store::{Store, space};
-use xops_table::{TableId, Tables, WrittenBy, system};
+use xops_table::{Filter, MAX_SCAN, TableId, Tables, WrittenBy, system};
 
 use crate::capability::{Capabilities, Position};
 use crate::carrier::Host;
@@ -413,18 +413,24 @@ impl Plugins {
         name: &str,
         version: u32,
     ) -> Result<Option<(RowId, Plugin)>> {
-        for (row, values) in self.tables.rows(Some(project), &Self::table()?, 4_096)? {
-            let plugin = Self::from_row(project, &values)?;
-            if plugin.name == name && plugin.version == version {
-                return Ok(Some((row, plugin)));
-            }
-        }
-        Ok(None)
+        let hit = self.tables.query_all(
+            Some(project),
+            &Self::table()?,
+            &[
+                Filter::equals("plugin", name),
+                Filter::equals("version", version.to_string()),
+            ],
+            MAX_SCAN,
+        )?;
+        hit.into_iter()
+            .next()
+            .map(|(row, values)| Ok((row, Self::from_row(project, &values)?)))
+            .transpose()
     }
 
     fn all(&self, project: ProjectId) -> Result<Vec<Plugin>> {
         self.tables
-            .rows(Some(project), &Self::table()?, 4_096)?
+            .query_all(Some(project), &Self::table()?, &[], MAX_SCAN)?
             .into_iter()
             .map(|(_, values)| Self::from_row(project, &values))
             .collect()
@@ -542,6 +548,8 @@ impl Host for PluginHost {
         if !self.capabilities.allows_table(&name) {
             return Err(Error::invalid(format!("{table} 不在声明之列")));
         }
+        // ⚠️ **给的是最老的 `limit` 行**（按写入序）。插件想要"最近的那些"时
+        // 这不是它期待的答案——把游标接上来是下一步。
         let rows = self
             .tables
             .rows(Some(self.project), &name, limit)?

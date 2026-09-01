@@ -52,6 +52,8 @@ pub trait Host: Send + Sync + 'static {
 
     /// 读一张表（`PLG-012` ③）。
     ///
+    /// ⚠️ **给的是最老的 `limit` 行**（按写入序），不是最新的。
+    ///
     /// # Errors
     /// 表不存在或底层不可用。**"不许读"不从这里出去**——那种表压根不在绑定的可达范围里。
     fn read_table(&self, table: &str, limit: usize) -> Result<Value>;

@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use xops_core::{Error, Result};
+use xops_core::{Error, Id, Result, RowId};
 use xops_flow::instance::{InstanceState, Subject};
 use xops_flow::{Flows, Instance};
 use xops_identity::{Directory, ProjectId, UserId};
@@ -204,6 +204,13 @@ impl XForge {
     }
 
     /// 找出结算这个实例的那一行，解析出 approver 与 reason。
+    ///
+    /// ⚠️ **这里是按行标识点查，不是扫表。** 实例自己记着是哪几行结算了它
+    /// （`_flow_nodes.settledBy`），所以根本不需要去结算表里找。
+    ///
+    /// 早先这里是"扫前 500 行再比对"，那个写法在结算表超过 500 行之后
+    /// **对一个已决实例找不到结算行**——它会报一个 XForge 那边查不出原因的失败。
+    /// 行标识就在手里却去扫表，是这一处最没道理的地方。
     fn settling_row(
         &self,
         project: ProjectId,
@@ -216,13 +223,16 @@ impl XForge {
             .iter()
             .flat_map(|node| node.settled_by.clone())
             .collect();
-        for (row, values) in self
-            .tables
-            .rows(Some(project), &definition.settlement_table, 500)?
-        {
-            if !settled_rows.contains(&row.to_string()) {
+        for candidate in &settled_rows {
+            let Ok(row) = Id::parse(candidate).map(RowId::from_id) else {
                 continue;
-            }
+            };
+            let Some(values) = self
+                .tables
+                .get(Some(project), &definition.settlement_table, row)?
+            else {
+                continue;
+            };
             let written_by: WrittenBy = values
                 .get("writtenBy")
                 .cloned()

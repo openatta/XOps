@@ -7,6 +7,7 @@
 
 pub mod column;
 pub mod engine;
+pub mod query;
 pub mod system;
 pub mod table;
 pub mod tools;
@@ -14,5 +15,6 @@ pub mod writtenby;
 
 pub use column::{AUTO_COLUMNS, Column, ColumnType};
 pub use engine::{CATALOG_TABLE, Catalog, DropGuard, NoFlows, RowVersion, Tables};
+pub use query::{Filter, MAX_SCAN, Page, Query, matches_all};
 pub use table::{Kind, Protection, TableId, TableSchema, physical_name};
 pub use writtenby::WrittenBy;

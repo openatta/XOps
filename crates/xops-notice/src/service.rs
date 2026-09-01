@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use xops_core::{Clock, Error, Id, Result, RowId, Timestamp};
 use xops_identity::{Directory, ProjectId, UserId};
-use xops_table::{TableId, Tables, WrittenBy, system};
+use xops_table::{Filter, MAX_SCAN, TableId, Tables, WrittenBy, system};
 
 use crate::derive::{Derived, SourceEvent, from_event, materialize};
 use crate::notice::{Kind, Notice, NoticeId};
@@ -114,13 +114,20 @@ impl Notices {
     /// # Errors
     /// 底层不可用。
     pub fn unread(&self, viewer: UserId, limit: usize) -> Result<Vec<Notice>> {
+        // ⚠️ **`user` 是一个谓词，不是「前一万行里凑巧是我的那些」。**
+        //
+        // 旧写法扫前一万行再过滤：`_notices` 是全局表、留三个月，二十个人用两个月
+        // 就能过一万——过了之后**新通知反而看不见**，因为截断留下的是最老的一批。
+        //
+        // 这里的代价是一次全表扫描。**`_notices.user` 是全系统最该先加索引的那一列**，
+        // 加上之后这个调用就变成一次索引点查，而调用方一行不用改。
         let mut mine: Vec<Notice> = self
-            .rows()?
+            .matching(&[Filter::equals("user", viewer.to_string())])?
             .into_iter()
             .map(|(_, values)| Self::from_row(&values))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
-            .filter(|notice| notice.user == viewer && notice.unread())
+            .filter(Notice::unread)
             .collect();
         // 新的在前。**跨项目一起排**——这是 `NTF-014` 的那句"在一个地方看得到"。
         mine.sort_by_key(|notice| std::cmp::Reverse(notice.created_at.as_millis()));
@@ -168,7 +175,7 @@ impl Notices {
     pub fn prune(&self, now: Timestamp) -> Result<usize> {
         let table = Self::table()?;
         let mut swept = 0;
-        for (row, values) in self.rows()? {
+        for (row, values) in self.matching(&[])? {
             let expired = values
                 .get("retainUntil")
                 .and_then(Value::as_i64)
@@ -222,12 +229,14 @@ impl Notices {
         TableId::system(NOTICES_TABLE)
     }
 
-    fn rows(&self) -> Result<Vec<(RowId, Value)>> {
-        self.tables.rows(None, &Self::table()?, 10_000)
+    /// 全部命中。**扫不动时明确失败，不截断**（`xops_table::MAX_SCAN`）。
+    fn matching(&self, filters: &[Filter]) -> Result<Vec<(RowId, Value)>> {
+        self.tables
+            .query_all(None, &Self::table()?, filters, MAX_SCAN)
     }
 
     fn find(&self, notice: NoticeId) -> Result<Option<(RowId, Notice)>> {
-        for (row, values) in self.rows()? {
+        for (row, values) in self.matching(&[Filter::equals("notice", notice.to_string())])? {
             let record = Self::from_row(&values)?;
             if record.id == notice {
                 return Ok(Some((row, record)));

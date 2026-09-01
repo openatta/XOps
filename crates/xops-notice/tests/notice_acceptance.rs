@@ -440,6 +440,58 @@ fn 非项目成员收不到() {
 
 // ——————————————————————————————— 行级限定 ———————————————————————————————
 
+/// **通知表很大的时候,我的新通知照样看得见。**
+///
+/// 这一条对着一个真实的缺陷:早先 `unread` 是"扫前一万行再按 user 过滤"。
+/// `_notices` 是**平台全局表**、留三个月——二十个人用两个月就能过一万。
+/// 过了之后**新通知反而看不见**,因为行 ID 时间有序,截断留下的是最老的一批。
+///
+/// 而且它是静默的:没有报错,只有"怎么没收到通知"。
+#[test]
+fn 通知表过了旧上限之后新通知照样看得见() {
+    let fixture = build("memory", Arc::new(MemoryStore::new()));
+    let scene = scene(&fixture);
+    let notices_table = TableId::system(xops_table::system::NOTICES).unwrap();
+
+    // 先塞过旧的那个上限。**这些都不是给 bob 的**——它们只负责把他挤到截断线外。
+    for index in 0..10_100 {
+        fixture
+            .tables
+            .insert(
+                &xops_table::WrittenBy::Platform,
+                None,
+                &notices_table,
+                json!({
+                    "notice": xops_core::Id::generate().to_string(),
+                    "user": scene.alice.to_string(),
+                    "kind": "run-finished",
+                    "subject": format!("噪声 {index}"),
+                    "text": "别人的通知",
+                    "createdAt": 1,
+                }),
+            )
+            .unwrap();
+    }
+
+    // 现在给 bob 发一条 —— 它排在第 10101 位。
+    assert!(
+        fixture
+            .notices
+            .notify(&awaiting(scene.project, &[scene.bob]))
+            .is_empty()
+    );
+
+    let mine = fixture.notices.unread(scene.bob, 100).unwrap();
+    assert_eq!(
+        mine.len(),
+        1,
+        "旧写法在这里返回空:截断留下的是最老的一万条,而我的那条排在后面"
+    );
+    assert_eq!(mine[0].kind, Kind::NodeAwaitingMe);
+    // 而且**别人的一条都没串进来**（NTF-010）。
+    assert!(mine.iter().all(|notice| notice.user == scene.bob));
+}
+
 #[test]
 fn 查不到别人的也标记不了别人的() {
     for fixture in fixtures() {

@@ -511,6 +511,59 @@ fn 已决就给出decision与approver与原样的reason() {
     }
 }
 
+/// **结算表很大的时候,`poll_approval` 照样答得出来。**
+///
+/// 这一条对着一个真实的缺陷:早先 `settling_row` 是"扫结算表前 500 行再比对",
+/// 于是结算表一过 500 行,**对一个已决实例就找不到结算行**——它会报一个
+/// XForge 那边查不出原因的失败,而不是给出 `decided`。
+///
+/// 行标识本来就在实例自己身上(`_flow_nodes.settledBy`),**根本不该去扫表**。
+#[test]
+fn 结算表过了旧上限之后照样查得到批的人() {
+    // 一个 fixture 就够 —— 这条测的是访问路径,不是存储实现。
+    let fixture = build("memory", Arc::new(MemoryStore::new()));
+    let scene = scene(&fixture, true, true);
+    fixture
+        .xforge
+        .submit(scene.member, scene.project, &args("d1"))
+        .unwrap();
+
+    // 先把结算表填过旧的那个上限,**真正结算的那一行落在最后**。
+    for index in 0..600 {
+        fixture
+            .tables
+            .insert(
+                &WrittenBy::Person { user: scene.member },
+                Some(scene.project),
+                &scene.settlement,
+                json!({"decision": "批准", "reason": format!("噪声 {index}")}),
+            )
+            .unwrap();
+    }
+    settle(
+        &fixture,
+        &scene,
+        "d1",
+        WrittenBy::Person { user: scene.member },
+    );
+
+    let reply = fixture
+        .xforge
+        .poll(scene.owner, scene.project, "d1")
+        .unwrap();
+    let PollReply::Decided {
+        approver, reason, ..
+    } = reply
+    else {
+        panic!("结算行排在第 601 位,旧写法在这里会报「找不到结算它的那一行」");
+    };
+    assert_eq!(approver.id, scene.member.to_string());
+    assert_eq!(
+        reason, "看过了：\"没问题\" <ok>",
+        "拿到的是那一行,不是噪声行"
+    );
+}
+
 #[test]
 fn approver三种解析都实际构造一遍() {
     for (index, (label, written_by, expected)) in [

@@ -848,3 +848,62 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 派工单里有没有凭据形状的值。**验收要求"检查完整派工单内容"**，所以这条判定要能被跑，
   而不是靠读代码。它宁可误报也不漏报，`.sock` 也在名单里——
   socket 等同于模型凭据本身。
+
+### Element: rust:xops-task#Landing
+- module: xops-task
+- consumers: [xopsd, RP-15]
+- 产出落地。**顺序是定死的**（`TSK-006` ③ / `CON-011`）：先落 `_runs`，再写产出行。
+  理由不是洁癖——`FLW-026⑥` 要读 `_runs.status` 才知道产出行算不算结算。
+- ⚠️ **它不是跨表事务**（D43）：两者之间崩溃是可接受的失败形态；**反过来不是**，
+  顺序就是为了排除它。
+- ⚠️ `_runs` 那一行署名 **`WrittenBy::Platform`** 而不是这次执行：系统表只有平台能写
+  （`TBL-003`），"这次是谁跑的"由 `triggeredBy` / `task` / `skill` 几列回答，
+  它们比一个 `writtenBy` 说得更全。**产出行那一侧才用执行的署名。**
+
+### Element: rust:xops-task#Rejection
+- module: xops-task
+- consumers: [RP-15, RP-17]
+- **两层拒绝必须分清**（`EXE-024`）：schema 不过 → **整批行不入表**，执行归为技能错误类；
+  schema 过、节点判定不过 → **行入表**，只是不结算。
+- `rows_landed()` 是这条区分在代码里的形态。
+
+### Element: rust:xops-task#Notifier
+- module: xops-task
+- consumers: [RP-17]
+- **两种拒绝都要通知**（`EXE-024`）——自动化失灵不能是静默的。RP-17 填这个位。
+
+### Element: rust:xops-task#Retention
+- module: xops-task
+- consumers: [RP-11, RP-17]
+- 输出默认 1 个月，过程记录默认 7 天。**过程用于排查，结论用于回看，价值衰减速度不同**（`RET-001`）。
+- ⚠️ `RET-002`：`retainUntil` **取写入当时的配置，不靠回查任务再取**——
+  任务的保留期可以随时改，而已经写下的行不应该因为任务改了配置就提前消失或延后清理。
+
+### Element: rust:xops-task#Exemption
+- module: xops-task
+- consumers: [RP-14, RP-15, RP-17]
+- 豁免清单四项（`RET-006`），**豁免优先于任务保留期**（`RET-007`）：
+  任务完全可以往主体表写行，那批行两条规则都命中，必须有优先级。
+- 第一项最要紧：**一个还在进行中的流程实例，它的主体行或结算行被清理了就等于实例被腰斩**（`I-X`）。
+
+### Element: rust:xops-task#Cleanup
+- module: xops-task
+- consumers: [xopsd]
+- **全系统唯一一处硬删除**（`RET-010`）。它与 `I-D` 不冲突——
+  **不可变说的是"不会被改写"，不是"永久保留"**，且删除这件事本身留痕。
+- ⚠️ **没有"删除某一行"的入口**：唯一的公开方法只接受一个时刻（`RET-005`）。
+  有测试数这个 crate 里 `pub fn` 的个数。
+- 过程记录到期**只清 `trace` 这一列**，行本身按输出保留期走（`RET-004`）。
+
+### Element: rust:xops-task#Concurrency
+- module: xops-task
+- consumers: [RP-11, xopsd]
+- 并发上限，**平台与项目两级**（`EXE-027`）。两级都要有：只有平台级，一个项目就能把
+  名额吃光；只有项目级，项目一多平台还是会垮。
+- `Permit` **析构即归还**——忘了归还是这类代码最常见的漏。
+
+### Element: rust:xops-table#Tables::describe_internal
+- module: xops-table
+- consumers: [RP-12]
+- 查表结构，**不判权**。给平台自己的写入路径用——那条路上没有"调用者"这个概念，
+  写入者是一次执行，不是一个人。

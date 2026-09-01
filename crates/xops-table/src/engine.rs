@@ -470,6 +470,21 @@ impl Tables {
         Ok(schema)
     }
 
+    /// 查表结构，**不判权**。
+    ///
+    /// 给平台自己的写入路径用（RP-12 落账时要按 schema 校验产出行）——
+    /// 那条路上没有"调用者"这个概念，写入者是一次执行，不是一个人。
+    ///
+    /// # Errors
+    /// 表不存在或已软删。
+    pub fn describe_internal(
+        &self,
+        project: Option<ProjectId>,
+        name: &TableId,
+    ) -> Result<TableSchema> {
+        self.require(project, name)
+    }
+
     /// 查表结构。
     ///
     /// # Errors

@@ -5,11 +5,19 @@
 //!
 //! 归属：RP-10。**写入路径与清理归 RP-12**，它与本包串行动同一个 crate。
 
+pub mod cleanup;
+pub mod concurrency;
+pub mod landing;
 pub mod policy;
+pub mod retention;
 pub mod service;
 pub mod task;
 pub mod tools;
 
+pub use cleanup::{Cleanup, Swept};
+pub use concurrency::{Concurrency, Permit};
+pub use landing::{Completion, Landed, Landing, MAX_OUTPUT_CHARS, Notifier, Rejection};
 pub use policy::{DEFAULT_TOKEN_BUDGET, OnComplete, Overlap, TerminationStep, VersionPolicy};
+pub use retention::{Exemption, Retention, exemption};
 pub use service::{SubscriptionCheck, TASKS_TABLE, Tasks};
 pub use task::{Kind, Task, TaskId};

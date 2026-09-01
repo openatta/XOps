@@ -56,16 +56,36 @@ fn seeded() -> Vec<(&'static str, Arc<dyn Relations>)> {
     for (label, relations) in implementations() {
         relations.declare(&notices()).unwrap();
         relations
-            .upsert("notices", row(1), &notice("alice", 100, None))
+            .upsert(
+                "notices",
+                row(1),
+                &notice("alice", 100, None),
+                &notice("alice", 100, None),
+            )
             .unwrap();
         relations
-            .upsert("notices", row(2), &notice("bob", 200, None))
+            .upsert(
+                "notices",
+                row(2),
+                &notice("bob", 200, None),
+                &notice("bob", 200, None),
+            )
             .unwrap();
         relations
-            .upsert("notices", row(3), &notice("bob", 300, Some(350)))
+            .upsert(
+                "notices",
+                row(3),
+                &notice("bob", 300, Some(350)),
+                &notice("bob", 300, Some(350)),
+            )
             .unwrap();
         relations
-            .upsert("notices", row(4), &notice("bob", 400, None))
+            .upsert(
+                "notices",
+                row(4),
+                &notice("bob", 400, None),
+                &notice("bob", 400, None),
+            )
             .unwrap();
         out.push((label, relations));
     }
@@ -92,7 +112,9 @@ fn 没声明过的投影用不了() {
     for (label, relations) in implementations() {
         assert!(relations.select("nope", &Select::new()).is_err(), "{label}");
         assert!(
-            relations.upsert("nope", row(1), &json!({})).is_err(),
+            relations
+                .upsert("nope", row(1), &json!({}), &json!({}))
+                .is_err(),
             "{label}"
         );
     }
@@ -169,6 +191,34 @@ fn 不大于用来捞到期的那一批() {
 }
 
 #[test]
+fn 不大于遇到null是不匹配() {
+    // ⚠️ 两个实现最容易在这里漂：SQL 里 `NULL <= 5` 是 NULL（不匹配），
+    // 而"手写过滤"很容易把缺列当成 0 或者当成匹配。
+    // 到期清理靠这条：**没设过期时刻的实例不该被扫进来。**
+    for (label, relations) in implementations() {
+        relations.declare(&notices()).unwrap();
+        relations
+            .upsert(
+                "notices",
+                row(1),
+                &json!({"user": "a", "created_at": 1, "read_at": null, "retain_until": null}),
+                &json!({}),
+            )
+            .unwrap();
+        assert!(
+            relations
+                .select(
+                    "notices",
+                    &Select::new().no_later_than("retain_until", 9_999)
+                )
+                .unwrap()
+                .is_empty(),
+            "{label}：null 不参与 ≤ 的比较"
+        );
+    }
+}
+
+#[test]
 fn 非空是为空的镜像() {
     for (label, relations) in seeded() {
         let read = relations
@@ -183,7 +233,12 @@ fn 非空是为空的镜像() {
 fn 覆盖写与删除() {
     for (label, relations) in seeded() {
         relations
-            .upsert("notices", row(2), &notice("bob", 200, Some(999)))
+            .upsert(
+                "notices",
+                row(2),
+                &notice("bob", 200, Some(999)),
+                &notice("bob", 200, Some(999)),
+            )
             .unwrap();
         assert_eq!(
             relations
@@ -221,11 +276,42 @@ fn 清空之后一行不剩() {
         );
         // 清空不是删表 —— 还能接着写。
         relations
-            .upsert("notices", row(9), &notice("carol", 1, None))
+            .upsert(
+                "notices",
+                row(9),
+                &notice("carol", 1, None),
+                &notice("carol", 1, None),
+            )
             .unwrap();
         assert_eq!(
             relations.select("notices", &Select::new()).unwrap().len(),
             1
+        );
+    }
+}
+
+#[test]
+fn 用来找的那几样与原样带回来的可以是两回事() {
+    // 这是 `upsert` 分成两个参数的理由：**被索引的字段不一定在载荷的第一层。**
+    // 流程实例的 `subject` 就是嵌套的。
+    for (label, relations) in implementations() {
+        relations.declare(&notices()).unwrap();
+        relations
+            .upsert(
+                "notices",
+                row(7),
+                &json!({"user": "dave", "created_at": 5, "read_at": null, "retain_until": 9}),
+                &json!({"很深": {"的": {"东西": "在这儿"}}}),
+            )
+            .unwrap();
+        let hit = relations
+            .select("notices", &Select::new().equal("user", "dave"))
+            .unwrap();
+        assert_eq!(hit.len(), 1, "{label}：按扁平的那份找");
+        assert_eq!(
+            hit[0].1["很深"]["的"]["东西"],
+            json!("在这儿"),
+            "{label}：带回来的是嵌套的那份"
         );
     }
 }

@@ -8,7 +8,7 @@ use serde_json::json;
 use xops_audit::AuditLog;
 use xops_core::{Role, SystemClock, TableName, Timestamp};
 use xops_flow::definition::{Criteria, Evaluation, Filter, Node, Start, State, Step, Writers};
-use xops_flow::instance::{InstanceState, NodeState, Subject};
+use xops_flow::instance::{Instance, InstanceState, NodeState, Subject};
 use xops_flow::{Definition, FlowId, Flows};
 use xops_identity::{Directory, ExternalAccount, ProjectId, ProviderId, Slug, UserId};
 use xops_store::{MemoryStore, SqliteStore, Store, WriteEngine};
@@ -21,60 +21,82 @@ struct Fixture {
     flows: Arc<Flows>,
     tables: Arc<Tables>,
     directory: Arc<Directory>,
+    relations: Arc<dyn xops_store::Relations>,
+}
+
+/// 两个后端，**关系投影跟着各自的后端走**。
+///
+/// ⚠️ 一开始这里两档都给的内存投影——那样 SQLite 那个实现在整个测试套里
+/// 一次都没被跑到。**第二实现的价值在于两个都被跑**。
+type Backend = (&'static str, Arc<dyn Store>, Arc<dyn xops_store::Relations>);
+
+fn backends() -> Vec<Backend> {
+    let sqlite = Arc::new(SqliteStore::in_memory().unwrap());
+    let sqlite_relations = sqlite.relations();
+    vec![
+        (
+            "memory",
+            Arc::new(MemoryStore::new()) as Arc<dyn Store>,
+            Arc::new(xops_store::MemoryRelations::new()) as Arc<dyn xops_store::Relations>,
+        ),
+        ("sqlite", sqlite as Arc<dyn Store>, sqlite_relations),
+    ]
 }
 
 fn fixtures() -> Vec<Fixture> {
-    [
-        ("memory", Arc::new(MemoryStore::new()) as Arc<dyn Store>),
-        ("sqlite", Arc::new(SqliteStore::in_memory().unwrap())),
-    ]
-    .into_iter()
-    .map(|(label, store)| {
-        let clock = Arc::new(SystemClock);
-        let catalog = Arc::new(Catalog::open(Arc::clone(&store), clock.clone()).unwrap());
-        let engine = Arc::new(
-            WriteEngine::new(Arc::clone(&store), clock.clone())
-                .with_pre_write(Arc::clone(&catalog) as Arc<dyn xops_store::PreWrite>)
-                .with_schema_check(Arc::clone(&catalog) as Arc<dyn xops_store::SchemaCheck>),
-        );
-        let mut audit = AuditLog::new(Arc::clone(&engine), Arc::clone(&store)).unwrap();
-        for table in xops_identity::directory::platform_tables().unwrap() {
-            audit = audit.watching(table);
-        }
-        for table in [xops_table::CATALOG_TABLE, xops_flow::FLOWS_TABLE] {
-            audit = audit.watching(TableName::new(table).unwrap());
-        }
-        let audit = Arc::new(audit);
-        let directory = Arc::new(Directory::new(
-            Arc::clone(&engine),
-            Arc::clone(&store),
-            Arc::clone(&audit),
-            clock.clone(),
-        ));
-        let tables = Arc::new(Tables::new(
-            Arc::clone(&engine),
-            catalog,
-            Arc::clone(&audit),
-            Arc::clone(&directory),
-            clock.clone(),
-            Arc::clone(&store),
-        ));
-        let flows = Arc::new(Flows::new(
-            engine,
-            store,
-            audit,
-            Arc::clone(&directory),
-            Arc::clone(&tables),
-            clock,
-        ));
-        Fixture {
-            label,
-            flows,
-            tables,
-            directory,
-        }
-    })
-    .collect()
+    backends()
+        .into_iter()
+        .map(|(label, store, relations)| {
+            let clock = Arc::new(SystemClock);
+            let catalog = Arc::new(Catalog::open(Arc::clone(&store), clock.clone()).unwrap());
+            let engine = Arc::new(
+                WriteEngine::new(Arc::clone(&store), clock.clone())
+                    .with_pre_write(Arc::clone(&catalog) as Arc<dyn xops_store::PreWrite>)
+                    .with_schema_check(Arc::clone(&catalog) as Arc<dyn xops_store::SchemaCheck>),
+            );
+            let mut audit = AuditLog::new(Arc::clone(&engine), Arc::clone(&store)).unwrap();
+            for table in xops_identity::directory::platform_tables().unwrap() {
+                audit = audit.watching(table);
+            }
+            for table in [xops_table::CATALOG_TABLE, xops_flow::FLOWS_TABLE] {
+                audit = audit.watching(TableName::new(table).unwrap());
+            }
+            let audit = Arc::new(audit);
+            let directory = Arc::new(Directory::new(
+                Arc::clone(&engine),
+                Arc::clone(&store),
+                Arc::clone(&audit),
+                clock.clone(),
+            ));
+            let tables = Arc::new(Tables::new(
+                Arc::clone(&engine),
+                catalog,
+                Arc::clone(&audit),
+                Arc::clone(&directory),
+                clock.clone(),
+                Arc::clone(&store),
+            ));
+            let flows = Arc::new(
+                Flows::new(
+                    engine,
+                    store,
+                    audit,
+                    Arc::clone(&directory),
+                    Arc::clone(&tables),
+                    Arc::clone(&relations),
+                    clock,
+                )
+                .unwrap(),
+            );
+            Fixture {
+                label,
+                flows,
+                tables,
+                directory,
+                relations,
+            }
+        })
+        .collect()
 }
 
 fn equals(column: &str, value: &str) -> Criteria {
@@ -612,4 +634,179 @@ fn 全部验收一行结算行都没写() {
         !code.contains(&needle),
         "结算行归 RP-15，本包的验收不需要它"
     );
+}
+
+// ——————————————————————————————— 关系投影 ———————————————————————————————
+//
+// 实例这张表有三处读**都不是按行标识找的**：`find_by_subject`（XFG-011 的幂等）·
+// `pending_for`（跨项目聚合）· `expire_due`（到期那批）。它们现在走一张带索引的真表。
+
+impl Fixture {
+    /// 起一个实例，返回 `(发起人, 项目, 实例)`。
+    fn running(&self) -> (UserId, ProjectId, Instance) {
+        let (alice, project) = self.setup();
+        let definition = self
+            .flows
+            .define(
+                alice,
+                self.definition(
+                    project,
+                    alice,
+                    vec![Step::Single {
+                        node: node("初审", equals("stage", "初")),
+                    }],
+                ),
+            )
+            .unwrap();
+        let instance = self
+            .flows
+            .start(alice, definition.flow, definition.version, subject(), None)
+            .unwrap();
+        (alice, project, instance)
+    }
+}
+
+/// 关系投影是**查询真正走的那条路**——清掉它，这三处就什么也找不到。
+///
+/// 这条不是在夸这个设计，是在**证明它确实被用上了**：
+/// 如果三处仍然在扫账，清掉投影不会有任何影响，那这张表就是白建的。
+#[test]
+fn 三处读真的走关系投影() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let (alice, project, _) = fixture.running();
+        assert!(
+            fixture
+                .flows
+                .find_by_subject(project, "bug", "行1")
+                .unwrap()
+                .is_some(),
+            "{label}"
+        );
+        assert!(!fixture.flows.pending_for(alice).unwrap().is_empty());
+
+        fixture.relations.clear("flow_instances").unwrap();
+
+        assert!(
+            fixture
+                .flows
+                .find_by_subject(project, "bug", "行1")
+                .unwrap()
+                .is_none(),
+            "{label}：投影清掉之后就找不到了 —— 它确实是查询走的那条路"
+        );
+        assert!(fixture.flows.pending_for(alice).unwrap().is_empty());
+    }
+}
+
+/// **账还在，重放就全回来。** 关系投影是缓存，不是账。
+#[test]
+fn 投影漂了从账上重放回来() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let (_, project, instance) = fixture.running();
+
+        fixture.relations.clear("flow_instances").unwrap();
+        assert_eq!(
+            fixture.flows.rebuild_instances().unwrap(),
+            1,
+            "{label}：账上有一个实例"
+        );
+
+        let after = fixture
+            .flows
+            .find_by_subject(project, "bug", "行1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.id, instance.id, "{label}：一模一样地回来了");
+    }
+}
+
+/// 主体不同的实例互不干扰——**幂等找的是「这一个」，不是「随便一个」**。
+#[test]
+fn 按主体找找的是那一个() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let (alice, project, first) = fixture.running();
+        let definition = fixture.flows.list(alice, project).unwrap()[0].clone();
+        let other = fixture
+            .flows
+            .start(
+                alice,
+                definition.flow,
+                definition.version,
+                Subject {
+                    kind: "xforge".into(),
+                    id: "另一个摘要".into(),
+                    revision: None,
+                },
+                None,
+            )
+            .unwrap();
+
+        let found = fixture
+            .flows
+            .find_by_subject(project, "xforge", "另一个摘要")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, other.id, "{label}");
+        assert_ne!(found.id, first.id, "{label}：不是随便一个");
+        assert!(
+            fixture
+                .flows
+                .find_by_subject(project, "xforge", "没见过的摘要")
+                .unwrap()
+                .is_none(),
+            "{label}：没有的就是没有"
+        );
+    }
+}
+
+/// 没设过期时刻的实例**不该被到期清理扫进来**。
+///
+/// ⚠️ 这一条盯的是两个实现之间最容易漂的地方：SQL 里 `NULL <= x` 是 NULL（不匹配），
+/// 而手写过滤很容易把缺列当成 0。
+#[test]
+fn 没设过期时刻的不算到期() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let (alice, project, _) = fixture.running();
+        assert_eq!(
+            fixture
+                .flows
+                .expire_due(Timestamp::from_millis(i64::MAX))
+                .unwrap(),
+            0,
+            "{label}：null 不参与 ≤ 的比较"
+        );
+
+        let definition = fixture.flows.list(alice, project).unwrap()[0].clone();
+        let doomed = fixture
+            .flows
+            .start(
+                alice,
+                definition.flow,
+                definition.version,
+                Subject {
+                    kind: "xforge".into(),
+                    id: "会过期的".into(),
+                    revision: None,
+                },
+                Some(Timestamp::from_millis(10)),
+            )
+            .unwrap();
+        assert_eq!(
+            fixture
+                .flows
+                .expire_due(Timestamp::from_millis(11))
+                .unwrap(),
+            1,
+            "{label}：设了的那个到点了"
+        );
+        assert_eq!(
+            fixture.flows.instance(doomed.id).unwrap().state,
+            InstanceState::Expired,
+            "{label}"
+        );
+    }
 }

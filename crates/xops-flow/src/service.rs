@@ -5,7 +5,7 @@ use std::sync::Arc;
 use xops_audit::{AuditEnvelope, AuditLog};
 use xops_core::{Actor, Clock, Error, Result, RowId, TableName, Timestamp, WriteOp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
-use xops_store::{Store, WriteEngine, WriteRequest};
+use xops_store::{Column, Relation, Relations, Select, Store, WriteEngine, WriteRequest};
 use xops_table::{TableId, Tables};
 
 use crate::definition::{Definition, FlowId, Start, State, Step};
@@ -15,6 +15,60 @@ use crate::validate::require_valid;
 /// 流程定义与实例落在这两张平台表上。
 pub const FLOWS_TABLE: &str = "_flow_defs";
 pub const INSTANCES_TABLE: &str = "_flow_instances";
+
+/// 实例的**关系投影**：一张真表，`subject` 与 `state` 上有真索引（`D60`）。
+///
+/// # 为什么单独给它一张真表
+///
+/// 实例这张表有三处读**都不是按行标识找的**：
+///
+/// ```text
+/// find_by_subject   XFG-011 的幂等靠它 —— XForge 每次 submit 与 poll 都走一遍
+/// pending_for       跨项目聚合"我待处理的节点"（FLW-016）
+/// expire_due        到期的那批（FLW-017）
+/// ```
+///
+/// 三处原本都是**整张扫再过滤**。判据是"**这张表的读要不要按别的列找**"，
+/// 不是表有多大——而这三处答案都是要。
+///
+/// ⚠️ 它**是缓存,不是账**：账在 `_flow_instances` 的事件流里，
+/// 漂了 [`Flows::rebuild_instances`] 清空重放即可。
+pub const INSTANCES_RELATION: &str = "flow_instances";
+
+/// 关系投影的列。**只放"用来找"的那几样**，实例本体跟着载荷走。
+///
+/// ⚠️ `subject` 在实例里是**嵌套的**，所以这里是两列扁平的
+/// `subjectKind` / `subjectId`——这正是 `Relations::upsert` 分成
+/// "用来找的" 与 "原样带回来的" 两个参数的理由。
+fn instances_relation() -> Relation {
+    Relation {
+        name: INSTANCES_RELATION.to_owned(),
+        columns: vec![
+            Column::text("project", true),
+            Column::text("subjectKind", false),
+            // 幂等键找的是它 —— governingDigest 到实例是一一映射（`XFG-011`）。
+            Column::text("subjectId", true),
+            Column::text("state", true),
+            Column::integer("expiresAt", true),
+        ],
+    }
+}
+
+/// 从一个实例算出它的索引列。
+fn instance_columns(instance: &Instance) -> serde_json::Value {
+    serde_json::json!({
+        "project": instance.project.to_string(),
+        "subjectKind": instance.subject.kind,
+        "subjectId": instance.subject.id,
+        "state": serde_json::to_value(instance.state)
+            .ok()
+            .and_then(|state| state.as_str().map(str::to_owned)),
+        "expiresAt": instance.expires_at.map(Timestamp::as_millis),
+    })
+}
+
+/// 还在跑的那一档。**终态的不参与这三处查**。
+const RUNNING: &str = "running";
 
 /// 事件类型。
 pub mod kinds {
@@ -45,6 +99,7 @@ pub struct Flows {
     audit: Arc<AuditLog>,
     directory: Arc<Directory>,
     tables: Arc<Tables>,
+    relations: Arc<dyn Relations>,
     clock: Arc<dyn Clock>,
 }
 
@@ -55,23 +110,27 @@ impl std::fmt::Debug for Flows {
 }
 
 impl Flows {
-    #[must_use]
+    /// # Errors
+    /// 关系投影建不起来。
     pub fn new(
         engine: Arc<WriteEngine>,
         store: Arc<dyn Store>,
         audit: Arc<AuditLog>,
         directory: Arc<Directory>,
         tables: Arc<Tables>,
+        relations: Arc<dyn Relations>,
         clock: Arc<dyn Clock>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        relations.declare(&instances_relation())?;
+        Ok(Self {
             engine,
             store,
             audit,
             directory,
             tables,
+            relations,
             clock,
-        }
+        })
     }
 
     /// 校验一条定义。**不落库**（`FLW-008`）。
@@ -287,16 +346,17 @@ impl Flows {
     /// # Errors
     /// 底层不可用。
     pub fn expire_due(&self, now: Timestamp) -> Result<usize> {
+        // **按 `state` 与 `expiresAt` 一次索引查**，不是整张扫再挑。
+        let due = self.select_instances(
+            &Select::new()
+                .equal("state", RUNNING)
+                .no_later_than("expiresAt", now.as_millis()),
+        )?;
         let mut expired = 0;
-        for mut instance in self.all_instances()? {
-            if instance.state.is_terminal() {
-                continue;
-            }
-            if instance.expires_at.is_some_and(|at| at <= now) {
-                instance.expire(now)?;
-                self.save(&instance)?;
-                expired += 1;
-            }
+        for mut instance in due {
+            instance.expire(now)?;
+            self.save(&instance)?;
+            expired += 1;
         }
         Ok(expired)
     }
@@ -321,18 +381,18 @@ impl Flows {
     /// 底层不可用。
     pub fn pending_for(&self, user: UserId) -> Result<Vec<(Instance, String)>> {
         let mut out = Vec::new();
-        let projects: Vec<ProjectId> = self
-            .directory
-            .my_projects(user)?
-            .into_iter()
-            .map(|(project, _)| project.id)
-            .collect();
-        for instance in self.all_instances()? {
-            if instance.state.is_terminal() || !projects.contains(&instance.project) {
-                continue;
-            }
-            for node in instance.active() {
-                out.push((instance.clone(), node.node.clone()));
+        // **一个项目一次索引查**，而不是扫全平台的实例再按项目过滤。
+        // 一个人的项目数是个位数，这里的常数因子换掉的是"全平台实例数"。
+        for (project, _) in self.directory.my_projects(user)? {
+            let running = self.select_instances(
+                &Select::new()
+                    .equal("project", project.id.to_string())
+                    .equal("state", RUNNING),
+            )?;
+            for instance in running {
+                for node in instance.active() {
+                    out.push((instance.clone(), node.node.clone()));
+                }
             }
         }
         Ok(out)
@@ -351,11 +411,18 @@ impl Flows {
         kind: &str,
         id: &str,
     ) -> Result<Option<Instance>> {
-        Ok(self.all_instances()?.into_iter().find(|instance| {
-            instance.project == project
-                && instance.subject.kind == kind
-                && instance.subject.id == id
-        }))
+        // **一次索引查。** 早先这里是整张扫——XForge 每次 submit 与 poll 都走一遍，
+        // 而它是那条路上唯一的幂等保证（`XFG-011`）。
+        Ok(self
+            .select_instances(
+                &Select::new()
+                    .equal("project", project.to_string())
+                    .equal("subjectKind", kind)
+                    .equal("subjectId", id)
+                    .take(1),
+            )?
+            .into_iter()
+            .next())
     }
 
     /// 一条流程的全部版本。
@@ -447,6 +514,7 @@ impl Flows {
     }
 
     fn put_instance(&self, instance: &Instance, kind: &str, op: WriteOp) -> Result<()> {
+        // **先事件后投影**：反过来会出现"索引里有、账上没有"。
         self.write(
             INSTANCES_TABLE,
             RowId::from_id(instance.id.as_id()),
@@ -456,7 +524,45 @@ impl Flows {
             op,
             instance,
             &Actor::Platform,
+        )?;
+        self.index(instance)
+    }
+
+    /// 把一个实例落进关系投影。
+    fn index(&self, instance: &Instance) -> Result<()> {
+        let payload = serde_json::to_value(instance)
+            .map_err(|error| Error::internal(format!("实例装不下：{error}")))?;
+        self.relations.upsert(
+            INSTANCES_RELATION,
+            RowId::from_id(instance.id.as_id()),
+            &instance_columns(instance),
+            &payload,
         )
+    }
+
+    /// 从账重放关系投影。**漂了不需要修补，清空重放就行。**
+    ///
+    /// # Errors
+    /// 底层不可用。
+    pub fn rebuild_instances(&self) -> Result<usize> {
+        self.relations.clear(INSTANCES_RELATION)?;
+        let all = self.all_instances()?;
+        for instance in &all {
+            self.index(instance)?;
+        }
+        Ok(all.len())
+    }
+
+    /// 按一组条件从关系投影里取实例。
+    fn select_instances(&self, select: &Select) -> Result<Vec<Instance>> {
+        self.relations
+            .select(INSTANCES_RELATION, select)?
+            .into_iter()
+            .map(|(_, payload)| {
+                serde_json::from_value(payload)
+                    .map_err(|error| Error::internal(format!("实例读不回来：{error}")))
+            })
+            .collect()
     }
 
     #[allow(

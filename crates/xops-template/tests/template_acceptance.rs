@@ -34,7 +34,11 @@ struct Fixture {
     evaluator: Evaluator,
 }
 
-fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
+fn build(
+    label: &'static str,
+    store: Arc<dyn Store>,
+    relations: Arc<dyn xops_store::Relations>,
+) -> Fixture {
     let clock = Arc::new(SystemClock);
     let catalog = Arc::new(Catalog::open(Arc::clone(&store), clock.clone()).unwrap());
     let engine = Arc::new(
@@ -64,14 +68,18 @@ fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
         clock.clone(),
         Arc::clone(&store),
     ));
-    let flows = Arc::new(Flows::new(
-        Arc::clone(&engine),
-        Arc::clone(&store),
-        Arc::clone(&audit),
-        Arc::clone(&directory),
-        Arc::clone(&tables),
-        clock.clone(),
-    ));
+    let flows = Arc::new(
+        Flows::new(
+            Arc::clone(&engine),
+            Arc::clone(&store),
+            Arc::clone(&audit),
+            Arc::clone(&directory),
+            Arc::clone(&tables),
+            Arc::clone(&relations),
+            clock.clone(),
+        )
+        .unwrap(),
+    );
     let plugins = Arc::new(Plugins::new(Deps {
         tables: Arc::clone(&tables),
         store: Arc::clone(&store),
@@ -106,9 +114,17 @@ fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
 }
 
 fn fixtures() -> Vec<Fixture> {
+    // ⚠️ **关系投影跟着各自的后端走。** 两档都给内存投影的话，
+    // SQLite 那个实现在整个测试套里一次都不会被跑到。
+    let sqlite = Arc::new(SqliteStore::in_memory().unwrap());
+    let sqlite_relations = sqlite.relations();
     vec![
-        build("memory", Arc::new(MemoryStore::new())),
-        build("sqlite", Arc::new(SqliteStore::in_memory().unwrap())),
+        build(
+            "memory",
+            Arc::new(MemoryStore::new()),
+            Arc::new(xops_store::MemoryRelations::new()),
+        ),
+        build("sqlite", sqlite, sqlite_relations),
     ]
 }
 

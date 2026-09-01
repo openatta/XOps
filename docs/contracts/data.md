@@ -219,3 +219,16 @@ sql:meta.projection.<规则>           事件到当前视图的投影规则
 - ⚠️ **列名重名按大小写不敏感判**：目标库是 MySQL，那里的列名不区分大小写。
   在 SQLite 上 `readAt` 与 `readat` 是两列，换过去就是同一列——
   **这种差异在声明这一刻挡住，不留到迁移那天。**
+
+### Element: sql:relation.rel_flow_instances
+- module: xops-store
+- `_flow_instances` 的**关系投影**（`D60`）。
+- 列：`row`（主键）· `project` · `subjectKind` · `subjectId` · `state` ·
+  `expiresAt` · `payload`（整个实例的 JSON）。
+- 索引在 `project` · `subjectId` · `state` · `expiresAt` 上。
+  **`subjectKind` 不建**：它总与 `subjectId` 一起用，而 `subjectId` 那条已经
+  把候选集压到个位数了。**每一条索引都要在写入那一侧还回去。**
+- ⚠️ **`subject` 在实例里是嵌套的**，这里拆成两列扁平的 `subjectKind` / `subjectId`
+  ——这正是 `Relations::upsert` 分成"用来找的"与"原样带回来的"两个参数的理由。
+- ⚠️ **它是缓存，不是账**：账在 `_flow_instances` 的事件流里，
+  `Flows::rebuild_instances` 从账上重放。

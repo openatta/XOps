@@ -113,7 +113,8 @@ impl Store for MemoryStore {
 #[derive(Debug, Default)]
 pub struct MemoryRelations {
     declared: Mutex<BTreeMap<String, Relation>>,
-    rows: Mutex<BTreeMap<(String, RowId), Value>>,
+    /// `(用来找的那几样, 原样带回来的东西)`。
+    rows: Mutex<BTreeMap<(String, RowId), (Value, Value)>>,
 }
 
 impl MemoryRelations {
@@ -143,12 +144,15 @@ impl Relations for MemoryRelations {
         Ok(())
     }
 
-    fn upsert(&self, relation: &str, row: RowId, values: &Value) -> Result<()> {
+    fn upsert(&self, relation: &str, row: RowId, columns: &Value, payload: &Value) -> Result<()> {
         self.relation(relation)?;
         self.rows
             .lock()
             .map_err(|_| Error::internal("关系投影的锁中毒了"))?
-            .insert((relation.to_owned(), row), values.clone());
+            .insert(
+                (relation.to_owned(), row),
+                (columns.clone(), payload.clone()),
+            );
         Ok(())
     }
 
@@ -167,11 +171,11 @@ impl Relations for MemoryRelations {
             .rows
             .lock()
             .map_err(|_| Error::internal("关系投影的锁中毒了"))?;
-        let mut hit: Vec<(RowId, Value)> = rows
+        let mut hit: Vec<(RowId, Value, Value)> = rows
             .iter()
             .filter(|((name, _), _)| name == relation)
-            .filter(|(_, values)| matches(select, values))
-            .map(|((_, row), values)| (*row, values.clone()))
+            .filter(|(_, (columns, _))| matches(select, columns))
+            .map(|((_, row), (columns, payload))| (*row, columns.clone(), payload.clone()))
             .collect();
         if let Some((column, direction)) = &select.order {
             hit.sort_by(|left, right| {
@@ -185,7 +189,10 @@ impl Relations for MemoryRelations {
         if select.limit > 0 {
             hit.truncate(select.limit);
         }
-        Ok(hit)
+        Ok(hit
+            .into_iter()
+            .map(|(row, _, payload)| (row, payload))
+            .collect())
     }
 
     fn clear(&self, relation: &str) -> Result<()> {

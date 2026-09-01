@@ -161,8 +161,9 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         Arc::clone(&audit),
         Arc::clone(&directory),
         Arc::clone(&tables),
+        Arc::clone(&relations),
         Arc::clone(&clock),
-    ));
+    )?);
     let skills = Arc::new(Skills::new(
         Arc::clone(&engine),
         Arc::clone(&store),

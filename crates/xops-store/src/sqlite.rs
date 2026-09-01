@@ -259,7 +259,13 @@ impl Relations for SqliteRelations {
         Ok(())
     }
 
-    fn upsert(&self, relation: &str, row: RowId, values: &serde_json::Value) -> Result<()> {
+    fn upsert(
+        &self,
+        relation: &str,
+        row: RowId,
+        columns: &serde_json::Value,
+        payload: &serde_json::Value,
+    ) -> Result<()> {
         let declared = self.relation(relation)?;
         let table = format!("rel_{relation}");
         let names: Vec<&str> = declared
@@ -281,16 +287,16 @@ impl Relations for SqliteRelations {
             updates.join(", ")
         );
 
-        let payload = serde_json::to_vec(values)
+        let encoded = serde_json::to_vec(payload)
             .map_err(|error| Error::internal(format!("关系投影装不下：{error}")))?;
         // 行标识存成它的 26 字符文本形态：**排序与二进制一致**（都是时间序），
         // 而且拿 sqlite3 直接看这张表时它是可读的。
         let mut bound: Vec<rusqlite::types::Value> =
             vec![rusqlite::types::Value::Text(row.to_string())];
         for column in &declared.columns {
-            bound.push(cell(column.kind, values.get(&column.name)));
+            bound.push(cell(column.kind, columns.get(&column.name)));
         }
-        bound.push(rusqlite::types::Value::Blob(payload));
+        bound.push(rusqlite::types::Value::Blob(encoded));
 
         self.store
             .locked()?

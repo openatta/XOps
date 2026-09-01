@@ -13,7 +13,7 @@ use xops_identity::{Directory, ExternalAccount, ProjectId, ProviderId, Slug, Use
 use xops_notice::derive::SourceEvent;
 use xops_notice::notice::Kind;
 use xops_notice::{Notices, Retention};
-use xops_store::{MemoryRelations, MemoryStore, Relations, SqliteStore, Store, WriteEngine};
+use xops_store::{MemoryStore, Relations, SqliteStore, Store, WriteEngine};
 use xops_table::engine::Catalog;
 use xops_table::table::{Protection, TableId};
 use xops_table::{Column, ColumnType, Tables};
@@ -59,7 +59,11 @@ struct Fixture {
     clock: Arc<dyn Clock>,
 }
 
-fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
+fn build(
+    label: &'static str,
+    store: Arc<dyn Store>,
+    relations: Arc<dyn xops_store::Relations>,
+) -> Fixture {
     let clock = Arc::new(SystemClock);
     let catalog = Arc::new(Catalog::open(Arc::clone(&store), clock.clone()).unwrap());
     let engine = Arc::new(
@@ -88,7 +92,6 @@ fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
         store,
     ));
     tables.ensure_global_tables().unwrap();
-    let relations: Arc<dyn Relations> = Arc::new(MemoryRelations::new());
     let notices = Arc::new(
         Notices::new(
             Arc::clone(&tables),
@@ -109,9 +112,17 @@ fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
 }
 
 fn fixtures() -> Vec<Fixture> {
+    // ⚠️ **关系投影跟着各自的后端走。** 两档都给内存投影的话，
+    // SQLite 那个实现在整个测试套里一次都不会被跑到。
+    let sqlite = Arc::new(SqliteStore::in_memory().unwrap());
+    let sqlite_relations = sqlite.relations();
     vec![
-        build("memory", Arc::new(MemoryStore::new())),
-        build("sqlite", Arc::new(SqliteStore::in_memory().unwrap())),
+        build(
+            "memory",
+            Arc::new(MemoryStore::new()),
+            Arc::new(xops_store::MemoryRelations::new()),
+        ),
+        build("sqlite", sqlite, sqlite_relations),
     ]
 }
 
@@ -180,6 +191,7 @@ fn 通知写失败业务写不回滚而且有痕迹() {
         Arc::new(NoticesUnwritable {
             inner: Arc::clone(&inner),
         }),
+        Arc::new(xops_store::MemoryRelations::new()),
     );
     let scene = scene(&fixture);
     fixture
@@ -456,7 +468,11 @@ fn 非项目成员收不到() {
 /// 而且它是静默的:没有报错,只有"怎么没收到通知"。
 #[test]
 fn 通知表过了旧上限之后新通知照样看得见() {
-    let fixture = build("memory", Arc::new(MemoryStore::new()));
+    let fixture = build(
+        "memory",
+        Arc::new(MemoryStore::new()),
+        Arc::new(xops_store::MemoryRelations::new()),
+    );
     let scene = scene(&fixture);
 
     // 先塞过旧的那个上限。**这些都不是给 bob 的**——它们只负责把他挤到截断线外。

@@ -242,9 +242,16 @@ pub trait Relations: Send + Sync + 'static {
 
     /// 写一行。已经在了就覆盖。
     ///
+    /// `columns` 是**用来找的那几样**（按声明的列名取，只取一层）；
+    /// `payload` 是**要原样带回来的东西**。
+    ///
+    /// ⚠️ **它们是两个参数,不是一个。** 一开始这里只有一个值——两者同形时那很省事,
+    /// 但它会让人以为"被索引的字段一定在载荷的第一层"。
+    /// 载荷是嵌套结构（比如流程实例的 `subject`）时,那个假设当场就不成立了。
+    ///
     /// # Errors
     /// 没声明过这张投影，或者底层不可用。
-    fn upsert(&self, relation: &str, row: RowId, values: &Value) -> Result<()>;
+    fn upsert(&self, relation: &str, row: RowId, columns: &Value, payload: &Value) -> Result<()>;
 
     /// 删一行。**这里是真删**——投影是缓存，缓存里不需要墓碑。
     ///

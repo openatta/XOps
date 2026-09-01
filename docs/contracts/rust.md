@@ -1010,12 +1010,15 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-flow#Flows
 - module: xops-flow
-- consumers: [RP-15, RP-04, RP-18]
-- 定义 / 校验 / 停用 / 发起 / 推进 / 取消 / 过期 / 查状态 / 跨项目待办。
-- ⚠️ **`advance` 是 RP-15 唯一该用的推进入口**——它**不得自己去改
-  `_flows` / `_flow_nodes`**（这条分工是那一刀能成立的全部前提）。
-- `referencing` 给 RP-04 的删表判定用（`TBL-026`：被引用的表不能删）。
-- `FLW-007`：实例存的是**发起时的版本**，之后发布新版本不影响它。
+- consumers: [RP-15, RP-16, RP-18, RP-19, xopsd]
+- 流程定义与实例。**`advance` 是 RP-15 驱动迁移的唯一入口。**
+- **`_flow_instances` 现在有一张关系投影**（`D60`）：`project` · `subjectId` ·
+  `state` · `expiresAt` 上有真索引。三处**不按行标识找**的读因此变成索引查：
+  - `find_by_subject` —— `XFG-011` 的幂等靠它，**XForge 每次 submit 与 poll 都走一遍**
+  - `pending_for` —— 跨项目聚合"我待处理的节点"（`FLW-016`），现在是一个项目一次查
+  - `expire_due` —— 到期那批（`FLW-017`）
+- 写的顺序是**先事件后投影**：反过来会出现"索引里有、账上没有"。
+- 构造函数因此多一个 `Relations`，并且**返回 `Result`**（要声明那张投影）。
 
 ### Element: rust:xops-flow#NodeActivated
 - module: xops-flow
@@ -1361,17 +1364,17 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-store#Relations
 - module: xops-store
-- consumers: [RP-17, xopsd]
-- **第二条存储缝**（`D60`）：带索引的当前视图。**五个方法**，有测试钉着这个数——
-  多出来的每一个都是下一个实现要额外兑现的承诺。
+- consumers: [RP-14, RP-17, xopsd]
+- **第二条存储缝**（`D60`）：带索引的当前视图。**五个方法**，有测试钉着这个数。
 - 它与 `Store` **平级，不在它下面**：一个管事件与键值投影，一个管按别的列找。
-- ⚠️ **它是缓存，不是账。** 账在事件流里，关系投影是事件之后的第二次落地——
-  所以 `I-N` 不受影响，漂了**清空重放**即可。**能重建这件事本身就是它敢做缓存的理由。**
-- ⚠️ **没有违反 `CON-012`**：那条禁用的是触发器 · 存储过程 · 行锁 · 隔离级别 ·
-  MVCC · 外键 · 级联 · JSON 列。`CREATE TABLE` 与 `CREATE INDEX` 不在其中，
-  而且它们在 SQLite / MySQL / PostgreSQL 上是同一个东西。
-- **两个实现跑同一组一致性测试**（`SqliteRelations` / `MemoryRelations`）——
-  `G12` 的验收对两条缝都成立。内存那个不是桩，**它是契约正确性的证据**。
+- ⚠️ **它是缓存，不是账。** 账在事件流里——所以 `I-N` 不受影响，
+  漂了**清空重放**即可。**能重建这件事本身就是它敢做缓存的理由。**
+- ⚠️ **没有违反 `CON-012`**：`CREATE TABLE` 与 `CREATE INDEX` 不在那条的排除清单里，
+  而且在 SQLite / MySQL / PostgreSQL 上是同一个东西。
+- **`upsert` 分成"用来找的那几样"与"原样带回来的东西"两个参数。**
+  一开始它只有一个值——两者同形时那很省事，但它会让人以为**被索引的字段一定在
+  载荷的第一层**。载荷是嵌套结构（流程实例的 `subject`）时，那个假设当场就不成立。
+- **两个实现跑同一组一致性测试**；`NULL <= x` 不匹配这类最容易漂的语义各有一条。
 
 ### Element: rust:xops-store#Relation
 - module: xops-store
@@ -1420,3 +1423,8 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [xopsd]
 - 从账重放关系投影。**漂了不需要修补，清空重放就行。**
   换库、加列、或者哪次写只落了一半，走的都是这条路。
+
+### Element: rust:xops-flow#Flows::rebuild_instances
+- module: xops-flow
+- consumers: [xopsd]
+- 从账重放实例的关系投影。**漂了不需要修补，清空重放就行。**

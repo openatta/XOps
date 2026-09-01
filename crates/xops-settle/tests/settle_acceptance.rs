@@ -24,66 +24,86 @@ struct Fixture {
     evaluator: Evaluator,
 }
 
-fn fixtures() -> Vec<Fixture> {
-    [
-        ("memory", Arc::new(MemoryStore::new()) as Arc<dyn Store>),
-        ("sqlite", Arc::new(SqliteStore::in_memory().unwrap())),
+/// 两个后端，**关系投影跟着各自的后端走**。
+///
+/// ⚠️ 一开始这里两档都给的内存投影——那样 SQLite 那个实现在整个测试套里
+/// 一次都没被跑到。**第二实现的价值在于两个都被跑**。
+type Backend = (&'static str, Arc<dyn Store>, Arc<dyn xops_store::Relations>);
+
+fn backends() -> Vec<Backend> {
+    let sqlite = Arc::new(SqliteStore::in_memory().unwrap());
+    let sqlite_relations = sqlite.relations();
+    vec![
+        (
+            "memory",
+            Arc::new(MemoryStore::new()) as Arc<dyn Store>,
+            Arc::new(xops_store::MemoryRelations::new()) as Arc<dyn xops_store::Relations>,
+        ),
+        ("sqlite", sqlite as Arc<dyn Store>, sqlite_relations),
     ]
-    .into_iter()
-    .map(|(label, store)| {
-        let clock = Arc::new(SystemClock);
-        let catalog = Arc::new(Catalog::open(Arc::clone(&store), clock.clone()).unwrap());
-        let engine = Arc::new(
-            WriteEngine::new(Arc::clone(&store), clock.clone())
-                .with_pre_write(Arc::clone(&catalog) as Arc<dyn xops_store::PreWrite>)
-                .with_schema_check(Arc::clone(&catalog) as Arc<dyn xops_store::SchemaCheck>),
-        );
-        let mut audit = AuditLog::new(Arc::clone(&engine), Arc::clone(&store)).unwrap();
-        for table in xops_identity::directory::platform_tables().unwrap() {
-            audit = audit.watching(table);
-        }
-        for table in [xops_table::CATALOG_TABLE, xops_flow::FLOWS_TABLE] {
-            audit = audit.watching(TableName::new(table).unwrap());
-        }
-        let audit = Arc::new(audit);
-        let directory = Arc::new(Directory::new(
-            Arc::clone(&engine),
-            Arc::clone(&store),
-            Arc::clone(&audit),
-            clock.clone(),
-        ));
-        let tables = Arc::new(Tables::new(
-            Arc::clone(&engine),
-            catalog,
-            Arc::clone(&audit),
-            Arc::clone(&directory),
-            clock.clone(),
-            Arc::clone(&store),
-        ));
-        let flows = Arc::new(Flows::new(
-            engine,
-            store,
-            audit,
-            Arc::clone(&directory),
-            Arc::clone(&tables),
-            clock,
-        ));
-        let evaluator = Evaluator::new(
-            Arc::clone(&flows),
-            Arc::new(WriterCheck::new(
+}
+
+fn fixtures() -> Vec<Fixture> {
+    backends()
+        .into_iter()
+        .map(|(label, store, relations)| {
+            let clock = Arc::new(SystemClock);
+            let catalog = Arc::new(Catalog::open(Arc::clone(&store), clock.clone()).unwrap());
+            let engine = Arc::new(
+                WriteEngine::new(Arc::clone(&store), clock.clone())
+                    .with_pre_write(Arc::clone(&catalog) as Arc<dyn xops_store::PreWrite>)
+                    .with_schema_check(Arc::clone(&catalog) as Arc<dyn xops_store::SchemaCheck>),
+            );
+            let mut audit = AuditLog::new(Arc::clone(&engine), Arc::clone(&store)).unwrap();
+            for table in xops_identity::directory::platform_tables().unwrap() {
+                audit = audit.watching(table);
+            }
+            for table in [xops_table::CATALOG_TABLE, xops_flow::FLOWS_TABLE] {
+                audit = audit.watching(TableName::new(table).unwrap());
+            }
+            let audit = Arc::new(audit);
+            let directory = Arc::new(Directory::new(
+                Arc::clone(&engine),
+                Arc::clone(&store),
+                Arc::clone(&audit),
+                clock.clone(),
+            ));
+            let tables = Arc::new(Tables::new(
+                Arc::clone(&engine),
+                catalog,
+                Arc::clone(&audit),
                 Arc::clone(&directory),
-                Arc::clone(&tables),
-            )),
-        );
-        Fixture {
-            label,
-            flows,
-            tables,
-            directory,
-            evaluator,
-        }
-    })
-    .collect()
+                clock.clone(),
+                Arc::clone(&store),
+            ));
+            let flows = Arc::new(
+                Flows::new(
+                    engine,
+                    store,
+                    audit,
+                    Arc::clone(&directory),
+                    Arc::clone(&tables),
+                    Arc::clone(&relations),
+                    clock,
+                )
+                .unwrap(),
+            );
+            let evaluator = Evaluator::new(
+                Arc::clone(&flows),
+                Arc::new(WriterCheck::new(
+                    Arc::clone(&directory),
+                    Arc::clone(&tables),
+                )),
+            );
+            Fixture {
+                label,
+                flows,
+                tables,
+                directory,
+                evaluator,
+            }
+        })
+        .collect()
 }
 
 fn equals(column: &str, value: &str) -> Criteria {

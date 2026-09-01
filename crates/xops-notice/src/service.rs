@@ -209,7 +209,8 @@ impl Notices {
         // 账已经记上了，跟着刷投影。**读回来再写**——`update` 的语义是合并，
         // 这里要的是合并之后的那一行，不是刚才那个 patch。
         if let Some(merged) = self.tables.get(None, &Self::table()?, row)? {
-            self.relations.upsert(NOTICES_RELATION, row, &merged)?;
+            self.relations
+                .upsert(NOTICES_RELATION, row, &merged, &merged)?;
         }
         Ok(record)
     }
@@ -248,7 +249,8 @@ impl Notices {
         let rows = self.matching(&[])?;
         let count = rows.len();
         for (row, values) in rows {
-            self.relations.upsert(NOTICES_RELATION, row, &values)?;
+            self.relations
+                .upsert(NOTICES_RELATION, row, &values, &values)?;
         }
         Ok(count)
     }
@@ -287,7 +289,8 @@ impl Notices {
         let row =
             self.tables
                 .insert(&WrittenBy::Platform, None, &Self::table()?, values.clone())?;
-        self.relations.upsert(NOTICES_RELATION, row, &values)?;
+        self.relations
+            .upsert(NOTICES_RELATION, row, &values, &values)?;
         Ok(row)
     }
 

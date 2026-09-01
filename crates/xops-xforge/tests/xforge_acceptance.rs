@@ -33,7 +33,11 @@ struct Fixture {
     directory: Arc<Directory>,
 }
 
-fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
+fn build(
+    label: &'static str,
+    store: Arc<dyn Store>,
+    relations: Arc<dyn xops_store::Relations>,
+) -> Fixture {
     let clock = Arc::new(SystemClock);
     let catalog = Arc::new(Catalog::open(Arc::clone(&store), clock.clone()).unwrap());
     let engine = Arc::new(
@@ -67,14 +71,18 @@ fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
         clock.clone(),
         Arc::clone(&store),
     ));
-    let flows = Arc::new(Flows::new(
-        Arc::clone(&engine),
-        Arc::clone(&store),
-        Arc::clone(&audit),
-        Arc::clone(&directory),
-        Arc::clone(&tables),
-        clock.clone(),
-    ));
+    let flows = Arc::new(
+        Flows::new(
+            Arc::clone(&engine),
+            Arc::clone(&store),
+            Arc::clone(&audit),
+            Arc::clone(&directory),
+            Arc::clone(&tables),
+            Arc::clone(&relations),
+            clock.clone(),
+        )
+        .unwrap(),
+    );
     let repos = Arc::new(Repos::new(
         Deps {
             engine: Arc::clone(&engine),
@@ -129,9 +137,17 @@ impl xops_repo::GitPlatform for AlwaysReadOnly {
 }
 
 fn fixtures() -> Vec<Fixture> {
+    // ⚠️ **关系投影跟着各自的后端走。** 两档都给内存投影的话，
+    // SQLite 那个实现在整个测试套里一次都不会被跑到。
+    let sqlite = Arc::new(SqliteStore::in_memory().unwrap());
+    let sqlite_relations = sqlite.relations();
     vec![
-        build("memory", Arc::new(MemoryStore::new())),
-        build("sqlite", Arc::new(SqliteStore::in_memory().unwrap())),
+        build(
+            "memory",
+            Arc::new(MemoryStore::new()),
+            Arc::new(xops_store::MemoryRelations::new()),
+        ),
+        build("sqlite", sqlite, sqlite_relations),
     ]
 }
 
@@ -521,7 +537,11 @@ fn 已决就给出decision与approver与原样的reason() {
 #[test]
 fn 结算表过了旧上限之后照样查得到批的人() {
     // 一个 fixture 就够 —— 这条测的是访问路径,不是存储实现。
-    let fixture = build("memory", Arc::new(MemoryStore::new()));
+    let fixture = build(
+        "memory",
+        Arc::new(MemoryStore::new()),
+        Arc::new(xops_store::MemoryRelations::new()),
+    );
     let scene = scene(&fixture, true, true);
     fixture
         .xforge

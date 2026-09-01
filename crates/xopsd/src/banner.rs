@@ -41,7 +41,7 @@ pub fn render(config: &Config, assembled: &Assembled) -> String {
     if assembled.engine_kind == "stub" {
         out.push_str(
             "\n⚠️  执行引擎是**桩**：它跑得通，什么也没真跑。\n    \
-             接真引擎设 XOPS_ATTACORE_SOCKET。\n",
+             接真引擎设 XOPS_MODEL_KEY。\n",
         );
     } else {
         out.push_str("\n  执行引擎    attacore\n");

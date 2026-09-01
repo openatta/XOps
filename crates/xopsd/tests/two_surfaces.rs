@@ -349,3 +349,30 @@ fn 日志级别关得掉而且不认识的值不会把日志关掉() {
         "不认识的当 info，不是 off"
     );
 }
+
+/// **子模块是只读的。** 这条测试盯着一件真出过事的事。
+///
+/// `vendor/attacore` 是上游的仓，改那边的代码是明令禁止的:改动会被上游清理掉，
+/// **而一次被清理掉的修改是查不出来的**。
+///
+/// ⚠️ 已经踩过一次:`cargo fmt --all` 顺着 path 依赖走进了子模块，
+/// **一次格式化了 75 个文件**。`[workspace] exclude` 拦不住它——那张表是给
+/// 依赖解析看的，不是给 rustfmt 看的。所以格式化要走 `scripts/fmt.sh`。
+#[test]
+fn 子模块没有被改过() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(root.join("vendor/attacore"))
+        .output();
+    let Ok(output) = output else {
+        // 没有 git 或者子模块没拉下来:这条测试没什么可说的，不该因此变红。
+        return;
+    };
+    let dirty = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        dirty.trim().is_empty(),
+        "vendor/attacore 被改过了。**那个仓只读**——需求变更走 ISSUE 提过去。\n\
+         格式化用 `./scripts/fmt.sh`，不要用 `cargo fmt --all`。\n{dirty}"
+    );
+}

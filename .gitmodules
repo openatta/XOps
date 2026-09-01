@@ -1,0 +1,7 @@
+# AttaCore：执行引擎，**以库的形式嵌进来**（D61）。
+#
+# ⚠️ **这个仓只读。** 需求变更走 ISSUE 提过去，不在这里改——
+# 那边会清理掉本地改动，而一次被清理掉的修改是查不出来的。
+[submodule "vendor/attacore"]
+	path = vendor/attacore
+	url = https://github.com/openatta/AttaCore

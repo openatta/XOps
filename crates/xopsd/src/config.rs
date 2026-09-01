@@ -14,11 +14,15 @@ pub const WEB_ADDR: &str = "XOPS_WEB_ADDR";
 pub const ASSETS: &str = "XOPS_ASSETS";
 /// 工作区根目录。
 pub const WORKSPACES: &str = "XOPS_WORKSPACES";
-/// AttaCore 的 Unix socket。
+/// 模型 API key。**给了就用真引擎，不给就跑桩**。
 ///
-/// ⚠️ **不给就跑桩引擎**——这件事会在启动横幅上说出来，
-/// 因为"以为接了真引擎、其实跑的是桩"是一种查起来很慢的错。
-pub const ATTACORE_SOCKET: &str = "XOPS_ATTACORE_SOCKET";
+/// ⚠️ 这件事会在启动横幅上说出来，因为"以为接了真引擎、其实跑的是桩"
+/// 是一种查起来很慢的错。
+pub const MODEL_KEY: &str = "XOPS_MODEL_KEY";
+/// 默认模型。
+pub const MODEL: &str = "XOPS_MODEL";
+/// 模型服务地址（兼容 Anthropic Messages 的任何一个）。
+pub const MODEL_BASE_URL: &str = "XOPS_MODEL_BASE_URL";
 
 /// 一份启动配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +37,10 @@ pub struct Config {
     pub web_addr: String,
     pub assets: Option<PathBuf>,
     pub workspaces: PathBuf,
-    pub attacore_socket: Option<PathBuf>,
+    /// 模型凭据。**没有它就跑桩引擎。**
+    pub model_key: Option<String>,
+    pub model: String,
+    pub model_base_url: Option<String>,
 }
 
 impl Default for Config {
@@ -45,7 +52,9 @@ impl Default for Config {
             web_addr: "127.0.0.1:8766".to_owned(),
             assets: None,
             workspaces: std::env::temp_dir().join("xops-workspaces"),
-            attacore_socket: None,
+            model_key: None,
+            model: "claude-sonnet-4-6".to_owned(),
+            model_base_url: None,
         }
     }
 }
@@ -74,7 +83,9 @@ impl Config {
             web_addr: var(WEB_ADDR).unwrap_or(default.web_addr),
             assets: var(ASSETS).map(PathBuf::from),
             workspaces: var(WORKSPACES).map_or(default.workspaces, PathBuf::from),
-            attacore_socket: var(ATTACORE_SOCKET).map(PathBuf::from),
+            model_key: var(MODEL_KEY),
+            model: var(MODEL).unwrap_or(default.model),
+            model_base_url: var(MODEL_BASE_URL),
         })
     }
 
@@ -108,6 +119,6 @@ mod tests {
         assert!(config.web_addr.starts_with("127.0.0.1"));
         assert_ne!(config.mcp_addr, config.web_addr, "两个服务面分开");
         assert!(config.in_memory());
-        assert!(config.attacore_socket.is_none(), "不给就是桩引擎");
+        assert!(config.model_key.is_none(), "不给模型凭据就是桩引擎");
     }
 }

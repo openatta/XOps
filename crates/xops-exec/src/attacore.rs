@@ -186,7 +186,7 @@ impl Engine for AttaCoreEngine {
                 "session.run_turn",
                 json!({
                     "session_id": session,
-                    "message": prompt(worksheet),
+                    "message": worksheet.prompt(),
                 }),
             )
             .map_err(|error| {
@@ -236,19 +236,6 @@ impl Engine for AttaCoreEngine {
             tokens_used,
         })
     }
-}
-
-/// 派工单 → 一次对话的开场白。
-///
-/// **不含任何凭据、不含 socket 路径、不含到 XOps 的网络路径**（`EXE-010`、`EXE-004`）。
-fn prompt(worksheet: &Worksheet) -> String {
-    let mut text = String::new();
-    text.push_str(&worksheet.instruction);
-    if !worksheet.inputs.is_empty() {
-        text.push_str("\n\n## 输入\n\n");
-        text.push_str(&worksheet.inputs);
-    }
-    text
 }
 
 /// 引擎回的错误归到哪一类。
@@ -301,7 +288,7 @@ mod tests {
     #[test]
     fn 开场白里没有凭据也没有socket() {
         let engine = AttaCoreEngine::at("/tmp/attacore-test.sock");
-        let text = prompt(&worksheet());
+        let text = worksheet().prompt();
         assert!(text.contains("看一眼"));
         assert!(text.contains("上下文"));
         assert!(

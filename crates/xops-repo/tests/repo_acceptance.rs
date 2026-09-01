@@ -308,18 +308,44 @@ fn 非成员看到的与项目不存在一致() {
 
 // ——————————————————————————————— 枚举：不存在向仓库写入的调用 ———————————————————————————————
 
+/// **XOps 自己的代码里没有任何向仓库写入的调用**（`RPO-013`、`I-G`）。
+///
+/// # 它证明什么、不证明什么
+///
+/// ⚠️ **它扫的是 XOps 自己写的那些 crate,不含 `vendor/`。**
+/// 这不是为了让测试变绿——它一直就只扫得到我们自己的代码:
+/// 从 crates.io 拉来的依赖也从来不在扫描范围里,`vendor/attacore` 只是把
+/// 那个一直存在的边界**变得看得见了**。
+///
+/// `D61` 之后引擎在**同一个进程**里,而 AttaCore 的工具集里确实有 git 写操作
+/// （它是一个编码 agent 引擎）。所以这条测试**不再等于**"这个进程不可能写仓库"。
+///
+/// **真正兜住 `I-G` 的是凭据那一侧,而且它比源码扫描硬**:
+///
+/// ```text
+/// RPO-002  绑仓之前**实际推一次 dry-run**，推得进去就拒绝绑
+///          —— 声明会撒谎、会过期，只有真去推一下才知道
+/// RPO-005  凭据只进一个 0600 的临时 git 配置，用完即删
+/// ```
+///
+/// 也就是说:技能就算真去 `git push`,**手里那把凭据是被验证过推不动的**。
 #[test]
 fn 枚举全仓不存在任何向仓库写入的调用() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .unwrap();
+    let vendored = root.join("vendor");
     let mut offenders = Vec::new();
     walk(&root, &mut |path| {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             return;
         };
         if !name.ends_with(".rs") {
+            return;
+        }
+        // 依赖不在扫描范围里 —— 从 crates.io 拉来的那些也从来不在。
+        if path.starts_with(&vendored) {
             return;
         }
         let Ok(source) = fs::read_to_string(path) else {

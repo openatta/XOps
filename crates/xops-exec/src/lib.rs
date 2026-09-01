@@ -12,6 +12,7 @@
 
 pub mod attacore;
 pub mod contract;
+pub mod embedded;
 pub mod engine;
 pub mod failure;
 pub mod provider;
@@ -20,6 +21,7 @@ pub mod stub;
 pub mod worksheet;
 
 pub use contract::{ExecContract, Outcome, Status};
+pub use embedded::EmbeddedEngine;
 pub use engine::{Cancel, Completed, Engine};
 pub use failure::FailureKind;
 pub use provider::{BareBackend, IsolationLevel};

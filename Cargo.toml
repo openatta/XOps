@@ -1,5 +1,8 @@
 [workspace]
 resolver = "3"
+# AttaCore 是一个**自己的 workspace**，以子模块的形式在 vendor/attacore 下。
+# 不排除掉的话 cargo 会试着把它的 21 个 crate 吸进这个 workspace。
+exclude = ["vendor/attacore"]
 members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo", "crates/xops-skill", "crates/xops-task", "crates/xops-dispatch", "crates/xops-flow", "crates/xops-settle", "crates/xops-script", "crates/xops-notice", "crates/xops-template", "crates/xops-xforge", "crates/xopsd"]
 
 [workspace.package]
@@ -40,6 +43,15 @@ sha2 = "0.10"
 chacha20poly1305 = "0.10"
 # 插件载体（D52）：一次调用一个 runtime，默认零宿主绑定。
 rquickjs = { version = "0.12", features = ["bindgen"] }
+# 执行引擎（D61）：**以库的形式嵌进来，一个进程**。
+# 路径指向子模块，版本由子模块的 commit 定死 —— 见 .gitmodules。
+attacore-runtime = { package = "runtime", path = "vendor/attacore/crates/runtime" }
+attacore-model = { package = "model", path = "vendor/attacore/crates/model" }
+attacore-scene = { package = "scene", path = "vendor/attacore/crates/scene" }
+attacore-core = { package = "base", path = "vendor/attacore/crates/core" }
+# 嵌了 AttaCore 就把 tokio 一起带进来了。
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio-util = "0.7"
 # 只给 xopsd 用：捕 SIGTERM / SIGINT。
 # std 里没有信号 API，而自己写要 `unsafe`，那是 forbid 的 —— 所以引一个。
 signal-hook = "0.3"

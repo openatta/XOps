@@ -53,7 +53,9 @@ fn help() -> &'static str {
        XOPS_WEB_ADDR          只读 Web 面，默认 127.0.0.1:8766\n  \
        XOPS_ASSETS            前端产物目录，不给就用嵌进二进制的那一份\n  \
        XOPS_WORKSPACES        工作区根目录\n  \
-       XOPS_ATTACORE_SOCKET   AttaCore 的 socket，**不给就跑桩引擎**\n  \
+       XOPS_MODEL_KEY         模型 API key。**不给就跑桩引擎**\n  \
+       XOPS_MODEL             默认模型，默认 claude-sonnet-4-6\n  \
+       XOPS_MODEL_BASE_URL    模型服务地址（兼容 Anthropic Messages 的任何一个）\n  \
        XOPS_LOG               off / error / warn / info / debug，默认 info\n"
 }
 

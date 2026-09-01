@@ -18,12 +18,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use xops_audit::AuditLog;
-use xops_core::{Clock, Result, SystemClock, TableName};
+use xops_core::{Clock, Error, Result, SystemClock, TableName};
 use xops_dispatch::Dispatcher;
 use xops_dispatch::event::Whitelist;
-use xops_exec::attacore::AttaCoreEngine;
 use xops_exec::provider::IsolationLevel;
-use xops_exec::{Engine, ExecContract, Runtime, StubEngine};
+use xops_exec::{EmbeddedEngine, Engine, ExecContract, Runtime, StubEngine};
 use xops_flow::Flows;
 use xops_identity::{Directory, ProjectId};
 use xops_mcp::McpServer;
@@ -176,12 +175,12 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         Arc::clone(&clock),
     ));
 
-    // ④ 执行。**引擎不可用绝不就地跑**（`EXE-030`）——这里只决定接哪一个。
-    let (engine_impl, engine_kind): (Arc<dyn Engine>, &'static str) = match &config.attacore_socket
-    {
-        Some(socket) => (Arc::new(AttaCoreEngine::at(socket.clone())), "attacore"),
-        // ⚠️ **不给 socket 就是桩**。它跑得通、什么也没真跑——
-        // 启动横幅必须说出来。
+    // ④ 执行。**引擎嵌在这个进程里**（`D61`）——不再有 attacored 那个分立进程。
+    //
+    // 给了模型凭据就接真引擎，不给就跑桩。**这件事启动横幅会说出来**：
+    // "以为接了真引擎、其实跑的是桩"是一种查起来很慢的错。
+    let (engine_impl, engine_kind): (Arc<dyn Engine>, &'static str) = match &config.model_key {
+        Some(key) => (embedded_engine(config, key)?, "attacore"),
         None => (Arc::new(StubEngine::new()), "stub"),
     };
     // `D58`：**裸跑**。没兑现的那些需求由 `unsatisfied()` 枚举着，不是一句"以后补"。
@@ -323,6 +322,32 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         dispatcher,
         directory,
     })
+}
+
+/// 接真引擎。
+///
+/// ⚠️ **模型凭据到此为止。** 它进的是引擎的鉴权模式，不进派工单、不进过程记录
+/// （`EXE-010`、`I-F`）。
+fn embedded_engine(config: &Config, key: &str) -> Result<Arc<dyn Engine>> {
+    let auth = attacore_model::client::AuthMode::ApiKey(key.to_owned());
+    let client = match &config.model_base_url {
+        Some(base) => {
+            let url = base
+                .parse()
+                .map_err(|error| Error::invalid(format!("模型地址不合法：{error}")))?;
+            attacore_model::client::HttpAnthropicClient::with_base(auth, url)
+        }
+        None => attacore_model::client::HttpAnthropicClient::new(auth),
+    }
+    .map_err(|error| Error::unavailable(format!("模型客户端建不起来：{error}")))?;
+
+    let model: Arc<dyn attacore_core::interface::model::Model> = Arc::new(
+        attacore_model::adapter::AnthropicModel::new(Arc::new(client)),
+    );
+    let scene: Arc<dyn attacore_core::interface::scene::AgentScene> =
+        Arc::new(attacore_scene::scene::coding::CodingScene);
+    let settings = Arc::new(EmbeddedEngine::settings(&config.model));
+    Ok(Arc::new(EmbeddedEngine::new(scene, model, settings)?))
 }
 
 /// 让 `PathBuf` 在文档链接里可见。

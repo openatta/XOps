@@ -85,6 +85,28 @@ pub struct Worksheet {
 }
 
 impl Worksheet {
+    /// 派工单 → 喂给引擎的那一段。
+    ///
+    /// ⚠️ **不含任何凭据、不含 socket 路径、不含到 XOps 的网络路径**
+    /// （`EXE-010`、`EXE-004`、`I-F`）。派工单本身就不带这些,这里只是把已有的几样拼起来——
+    /// **不要在这里加任何「顺手带上」的东西**。
+    ///
+    /// 它在派工单上而不在某个引擎里:**两个引擎都要这个映射**,
+    /// 各写一份的话它们迟早会不一样,而那种不一样表现成"换个引擎产出就变了"。
+    #[must_use]
+    pub fn prompt(&self) -> String {
+        let mut text = String::new();
+        text.push_str(&self.instruction);
+        if !self.inputs.trim().is_empty() {
+            text.push_str("\n\n## 输入\n\n");
+            text.push_str(&self.inputs);
+        }
+        if let Some(revision) = &self.revision {
+            text.push_str(&format!("\n\n（代码修订：{revision}）"));
+        }
+        text
+    }
+
     /// 校验这份派工单本身。
     ///
     /// # Errors

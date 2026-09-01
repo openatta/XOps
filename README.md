@@ -27,6 +27,7 @@
 ## 跑起来
 
 ```bash
+git submodule update --init   # AttaCore（执行引擎，嵌进来的）
 cargo build --release
 
 # 生成一把加密密钥。**它没有默认值**——写死的默认密钥看起来是加密的,实际不是
@@ -44,7 +45,9 @@ export XOPS_DB=/var/lib/xops/xops.db
 | `XOPS_MCP_ADDR` | 默认 `127.0.0.1:8765` |
 | `XOPS_WEB_ADDR` | 默认 `127.0.0.1:8766` |
 | `XOPS_ASSETS` | 前端产物目录。不给就用嵌进二进制的那一份 |
-| `XOPS_ATTACORE_SOCKET` | AttaCore 的 socket。**不给就跑桩引擎** |
+| `XOPS_MODEL_KEY` | 模型 API key。**不给就跑桩引擎** |
+| `XOPS_MODEL` | 默认模型,默认 `claude-sonnet-4-6` |
+| `XOPS_MODEL_BASE_URL` | 模型服务地址(兼容 Anthropic Messages 的任何一个) |
 | `XOPS_LOG` | `off`/`error`/`warn`/`info`/`debug`,默认 `info` |
 
 **存活探针**:`GET /healthz` → `{"status":"ok"}`。不认证、不查库、**不带任何信息**。
@@ -67,8 +70,10 @@ export XOPS_DB=/var/lib/xops/xops.db
 | 让别人往里放技能 | **不行**——那是在你的宿主上跑他的代码 |
 | 生产 | **不行** |
 
-**默认引擎是桩**:不设 `XOPS_ATTACORE_SOCKET` 就是 `StubEngine`——跑得通,
-什么也没真跑。真引擎(AttaCore)的对接尚未对着一个真实 daemon 验过。
+**默认引擎是桩**:不设 `XOPS_MODEL_KEY` 就是 `StubEngine`——跑得通,什么也没真跑。
+
+**引擎是嵌进来的**(`D61`):AttaCore 以 git 子模块固定在 `v0.2.0`,**一个进程**,
+没有 `attacored`。克隆之后要 `git submodule update --init`。
 
 ## 设计文档
 
@@ -87,14 +92,19 @@ docs/contracts/                     接口在上一次被批准时长什么样
 ## 开发
 
 ```bash
-cargo test --workspace          # 647 个测试
+cargo test --workspace          # 656 个测试
 cargo clippy --all-targets      # -D all
+./scripts/fmt.sh                # ⚠️ 不要用 cargo fmt --all，见下
 cd web && npm ci && npm test    # 11 个前端测试
 node scripts/contracts.mjs check
 ```
 
 20 个 crate。`rusqlite` **只允许出现在 `xops-store/src/sqlite.rs` 一个文件里**,
 有一条枚举全仓的测试守着这条线。
+
+⚠️ **`vendor/attacore` 是只读的子模块**(执行引擎)。改那边的代码会被上游清理掉,
+需求变更走 ISSUE。**格式化用 `./scripts/fmt.sh`**——`cargo fmt --all` 会顺着
+path 依赖走进子模块(踩过一次,75 个文件),`[workspace] exclude` 拦不住它。
 
 ## 许可
 

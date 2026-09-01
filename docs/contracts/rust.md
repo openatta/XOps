@@ -572,12 +572,12 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-exec#ExecContract
 - module: xops-exec
-- consumers: [RP-11]
-- **XOps 与执行引擎之间唯一的接缝**（`EXE-014`）。四个方法：`submit` / `status` / `cancel` / `collect`。
-- ⚠️ **契约里不出现引擎的任何类型。** 这条有硬验收——换一个毫不相干的引擎进去，
-  上面的一切不改一行；还有一个测试直接扫这个模块的源码，确认它没漏进 `attacore` 这类词。
-- `EXE-021`：**提交即返回**。引擎不可用**不在 `submit` 上报错**——那是一次失败的执行，
-  不是一次失败的提交（`EXE-030`）。
+- consumers: [RP-10, RP-11, RP-12, xopsd]
+- **XOps 与执行引擎之间唯一的接缝。引擎的概念不得泄漏进它**（`EXE-014`）。
+- 四个方法：提交（**提交即返回**，`EXE-021`）· 查状态 · 取消 · 收结果。
+- ⚠️ **`D61` 之后引擎在同一个进程里**，但这条接缝一个字没改——
+  `Engine` 仍是 trait、`StubEngine` 仍在、"换成桩不改一行"的硬验收照做。
+  **改掉的是拓扑，不是契约。**
 
 ### Element: rust:xops-exec#Worksheet
 - module: xops-exec
@@ -1482,3 +1482,31 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-web
 - consumers: [xopsd]
 - 同上。
+
+### Element: rust:xops-exec#EmbeddedEngine
+- module: xops-exec
+- consumers: [xopsd]
+- **AttaCore 以库的形式嵌进来，一个进程**（`D61`）。源码是 git 子模块，固定在 `v0.2.0`。
+- ⚠️ **AttaCore 的类型只允许出现在 `embedded.rs` 一个文件里。**
+  `EXE-014` 被 `D61` 改掉的只有"两个分立的进程"那半句;
+  **"引擎的概念不得泄漏进契约"那半句一个字没改**——有一条枚举源码的测试守着它。
+- `EmbeddedEngine::settings` 是 XOps 该用的那份引擎配置:
+  **`memory_enabled = false`**。引擎默认会在回合结束后**再发一次模型调用**做记忆提取，
+  而那次的 token **不在 `TurnOutcome.usage` 里**（`TSK-005` 的预算按它记账，会悄悄超），
+  且发生在我们已经返回之后（`EXE-019` 的强制终止管不到）。
+  ⚠️ **这是实测撞出来的**:脚本里排了两个回合，跑一次就少了一个。
+- **一次执行造一个 `Agent`，跑完就掉**（`EXE-016`）。库模式**没有会话池**——
+  会话隔离是结构上的，不是靠淘汰策略。`EXE-016` 特意点过 daemon 那侧的池子
+  "看起来干净比没有池子时更容易骗过人"。
+- 取消：**开跑之前先看一眼**。看门狗先于我们到时，靠轮询任务是来不及的——
+  一次回合可能在轮询线程被调度之前就跑完，于是"已经要求取消"变成"照样跑完并计费"。
+- 事件流**边跑边收**，不等通道关闭。⚠️ 早先的写法是"等 `recv()` 返回 `None`"，
+  **那会挂死**:通道要等 `Agent` 连同它内部每一份 sender 全部掉光才关，而那不在我们手上。
+
+### Element: rust:xops-exec#Worksheet::prompt
+- module: xops-exec
+- consumers: [xops-exec 的两个引擎]
+- 派工单 → 喂给引擎的那一段。**不含任何凭据、不含 socket 路径、不含到 XOps 的网络路径**
+  （`EXE-010`、`EXE-004`、`I-F`）。
+- 它在派工单上而不在某个引擎里:**两个引擎都要这个映射**，各写一份的话它们迟早会不一样，
+  而那种不一样表现成"换个引擎产出就变了"。

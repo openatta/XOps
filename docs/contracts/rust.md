@@ -697,3 +697,40 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [xopsd]
 - 写入路径 · 存储 · 审计 · 身份 · 时钟。**它们总是一起出现**，摊成五个参数
   调用处就会开始靠位置记顺序。
+
+### Element: rust:xops-skill#Declaration
+- module: xops-skill
+- consumers: [RP-10, RP-11, RP-07]
+- **四样，穷举的**（`SKL-007`）：输入契约 · 产出形态 · 是否读仓 + 出网白名单 · 时长上限。
+- ⚠️ `I-I`：**未声明的一律不提供。** 这个结构里没有"其它能力"那一栏，
+  所以"声明之外还有第五条获取能力的途径"这件事，得先改它才做得到。有测试数这几个字段。
+- 输入契约**可机读**，因而 `check_arguments` 能真的校验——多一个没声明的参数就拒，
+  与 `MCP-003` 是同一条纪律。
+
+### Element: rust:xops-skill#Skill
+- module: xops-skill
+- consumers: [RP-10, RP-11]
+- 身份与归属。内容与声明挂在版本上。
+
+### Element: rust:xops-skill#Ownership
+- module: xops-skill
+- consumers: [RP-10, RP-11, RP-15]
+- **两种，没有第三种**（`SKL-008`）：项目公共 · 个人私有。
+
+### Element: rust:xops-skill#Version
+- module: xops-skill
+- consumers: [RP-10, RP-11, RP-15]
+- `SKL-002`：**已发布的版本不可变**——改内容产生新版本，旧版本原样可查。
+- `content` 是**不可信输入**（`SKL-006`、G7）：平台不解析其语义、不因其内容改变控制流。
+- `used_for_settlement` 是 `SKL-011` 那条例外的开关：**标记由 RP-15 打，本包按它判可见性**。
+
+### Element: rust:xops-skill#Skills
+- module: xops-skill
+- consumers: [RP-10, RP-11, RP-15, RP-16]
+- 建 / 改（产生新版本）/ 记测试 / 发布 / 停用 / 派生 / 读 / 列。
+- ⚠️ **`runnable_for` 每次现算，不缓存**。`SKL-009`：私有技能能读项目数据，是因为
+  **它的所有者是项目成员**——权限来自人，不来自技能。缓存一次，"退出项目即失效"就没了。
+- `record_successful_test` 只收下"有过一次成功测试执行"这个事实，**真去跑一次是 RP-11 的事**。
+  这也是为什么"未测试不可发布"能在 RP-11 完成之前验收。
+- `derive_private` 是**一次拷贝而不是引用**（`SKL-010`）：改私有副本不影响公共的。
+- `mark_used_for_settlement` 留给 RP-15。

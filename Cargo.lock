@@ -648,6 +648,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "xops-skill"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xops-audit",
+ "xops-core",
+ "xops-identity",
+ "xops-mcp",
+ "xops-store",
+]
+
+[[package]]
 name = "xops-store"
 version = "0.1.0"
 dependencies = [

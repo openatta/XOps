@@ -1,0 +1,20 @@
+[package]
+name = "xops-read"
+description = "读模型：看板定义 · 表视图 · 单行历史 · 长文本原文。Web 唯一的查询契约。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+xops-table.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

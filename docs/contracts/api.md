@@ -258,3 +258,66 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - module: xops-mcp
 - consumers: [agent]
 - 某个对象的完整历史。
+
+### Element: api:mcp.tool.board.define
+- module: xops-read
+- consumers: [agent]
+- **看板 = 一张表的一个视图**：显示哪张表、按什么筛选、按什么排序、显示哪几列（`BRD-001`）。
+- 筛选**只有等值与非空两种**——再多就开始像查询语言了。
+- ⚠️ **`_notices` 建不了**（`BRD-004`）：个人看板是平台内建的固定视图，归 RP-17。
+
+### Element: api:mcp.tool.board.list
+- module: xops-read
+- consumers: [agent]
+
+### Element: api:mcp.tool.board.show
+- module: xops-read
+- consumers: [agent]
+
+### Element: api:http.paths./api/me.get
+- module: xops-web
+- consumers: [web]
+- 我是谁（`BRD-011`：**明确展示当前用户身份**）。
+
+### Element: api:http.paths./api/projects.get
+- module: xops-web
+- consumers: [web]
+- 我参与的项目。**可见性完全遵循项目成员边界。**
+
+### Element: api:http.paths./api/projects/{project}/boards.get
+- module: xops-web
+- consumers: [web]
+
+### Element: api:http.paths./api/projects/{project}/boards/{board}.get
+- module: xops-web
+- consumers: [web]
+
+### Element: api:http.paths./api/projects/{project}/tables/{table}/rows/{row}/history.get
+- module: xops-web
+- consumers: [web]
+- 单行历史——`BRD-006` 的前一半：**状态怎么变的、谁改的、什么时候**。
+
+### Element: api:http.paths./api/projects/{project}/tables/{table}/instances/{instance}/settlements.get
+- module: xops-web
+- consumers: [web]
+- 同实例的结算行——`BRD-006` 的后一半：**为什么这么变、谁表的态**。
+- ⚠️ **与上一条是两个视图、两次查询。平台不做 join**（`TBL-023`）。
+  路由表上因此没有任何一条叫 `timeline` 的路由。
+
+### Element: api:http.paths./api/projects/{project}/tables/{table}/rows/{row}/columns/{column}/raw.get
+- module: xops-web
+- consumers: [web]
+- 长文本的**原始形式**（`BRD-010`：供不信任渲染的人自行查看）。
+- `Content-Type: text/plain`，**一个字都不动**——不经任何渲染。
+
+### Element: api:http.paths./session.post
+- module: xops-web
+- consumers: [web]
+- 登录。**`MCP-013` 认下的四个例外之一（会话面）**：凭据类，只建立会话，
+  **不创建或修改任何业务对象**。
+- 下发的 cookie 带 `HttpOnly; SameSite=Strict`。
+
+### Element: api:http.paths./session.delete
+- module: xops-web
+- consumers: [web]
+- 注销。同上。

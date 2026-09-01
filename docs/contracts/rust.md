@@ -470,3 +470,71 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 它存在是因为依赖方向：`xops-mcp → xops-identity`，而"什么是表"在 `xops-table`，
   后者在 `xops-mcp` 之上。让 `xops-identity` 反过来依赖它就成环了，所以留一个位，
   由 `xopsd` 把 RP-04 接进来。
+
+### Element: rust:xops-read#Board
+- module: xops-read
+- consumers: [xops-web]
+- 看板定义。**平台不内建任何报表**（`BRD-002`）——没有聚合、没有指标、没有 join。
+  判断标准（`BRD-003`）：**如果有一天需要在平台代码里写"什么是缺陷密度"，那就越界了。**
+
+### Element: rust:xops-read#BoardSpec
+- module: xops-read
+- consumers: [xops-web]
+- 定义一个看板要给的那几样，**就是 `BRD-001` 那句话的逐字形态**。
+
+### Element: rust:xops-read#Filter
+- module: xops-read
+- consumers: [xops-web]
+- **只有等值与非空两种。**
+
+### Element: rust:xops-read#ReadModel
+- module: xops-read
+- consumers: [xops-web, RP-06 经 HTTP]
+- **前端唯一能看见的东西。** 前端不直连库、不拼 SQL、不调 MCP。
+- 这份接口的**完备性**是 RP-06 能并行开工的全部前提：它需要的每一样数据都要在这里，
+  不能让它去开第二条数据通路。
+- 视图：`IdentityView` · `ProjectView` · `BoardSummary` · `BoardView` · `RowHistoryView` ·
+  `SettlementView` · `LongTextView`。
+
+### Element: rust:xops-read#BoardView
+- module: xops-read
+- consumers: [xops-web]
+- **`writtenBy` 总是留着**：看板上的来源标识读的就是它（`TBL-016`）。
+
+### Element: rust:xops-read#RowHistoryView
+- module: xops-read
+- consumers: [xops-web]
+
+### Element: rust:xops-read#SettlementView
+- module: xops-read
+- consumers: [xops-web]
+- **与单行历史是两个视图。** 现在返回空——形状已经定了，值等 RP-15 填 `_instance`。
+
+### Element: rust:xops-web#ROUTES
+- module: xops-web
+- consumers: [RP-06, RP-13]
+- **路由是一张可枚举的常量表，不是散在代码里的一堆 match 分支。**
+- `BRD-005` 第 ① 道"后端不存在写路由"是**结构性**的，而 RP-05 的验收要求
+  "用路由表枚举来证明，不是靠代码审查"——所以路由先是数据，再是行为。
+- ⚠️ **RP-13 往这里加 webhook 端点时，要同时把它标成 `Kind::Credential` 之外的
+  那一类并说清它只能做的那一件事**，否则这张表就不再是一份证明了。
+
+### Element: rust:xops-web#Sessions
+- module: xops-web
+- consumers: [xops-web]
+- `I-L`：**Web 会话凭据与 MCP 令牌互不通用**。这条不是靠检查，是靠**两套东西根本不认识
+  对方**：会话 id 有自己的前缀与键空间，MCP 令牌只认 `xops_` 开头并比对摘要。
+  拿一个去换另一个，两边都查不到。
+
+### Element: rust:xops-web#WebServer
+- module: xops-web
+- consumers: [xopsd]
+- 只读 HTTP。`handle(&Request) -> Response` **没有传输，因而整段可以直接测**。
+- ⚠️ 它与 MCP 的服务面**不共用路由层**。两边各有一小段 HTTP 解析，**这份重复是故意留的**：
+  合起来就等于让两个服务面共用一个路由层，而那正是这条分工要避免的事。
+
+### Element: rust:xops-web#Assets
+- module: xops-web
+- consumers: [xopsd, RP-06]
+- 静态资源托管。**前端的构建产物随二进制发行**（D55），部署方不需要 Node。
+- SPA 的深链回落到 `index.html`；路径穿越被挡在段级检查上。

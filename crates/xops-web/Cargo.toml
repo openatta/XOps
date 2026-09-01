@@ -1,0 +1,24 @@
+[package]
+name = "xops-web"
+description = "只读 HTTP · 会话面 · 静态资源托管。**没有写路由。**"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-identity.workspace = true
+xops-read.workspace = true
+xops-table.workspace = true
+xops-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+getrandom.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+xops-audit.workspace = true
+xops-mcp.workspace = true

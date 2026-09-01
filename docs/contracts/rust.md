@@ -778,12 +778,73 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-task
 - consumers: [RP-11, RP-13]
 - 建 / 改 / 启停 / 读 / 列 / 找订阅者 / 解出技能版本。
-- **每一条校验都在创建时挡住，不留到运行时**——运行时才发现"引用的是草稿技能"
-  或者"onComplete 套了两层"，那时候已经跑起来了。
-- `resolve_skill_version` 转手问 `Skills::runnable_for`，因而 `SKL-009`
-  （所有者退出项目即失效）在任务这一侧也成立。
+- **每一条校验都在创建时挡住，不留到运行时。**
+- `resolve_skill_version` 转手问 `Skills::runnable_for`，因而 `SKL-009` 在任务这一侧也成立。
+- 本次接上 `with_subscription_check`：订阅声明的合法性由 RP-11 判，
+  **没接就等于不校验订阅**——那只在没有事件源的部署里成立。
 
 ### Element: rust:xops-task#DEFAULT_TOKEN_BUDGET
 - module: xops-task
 - consumers: [RP-11]
 - 未声明时的单次 token 上限（`TSK-005`）。
+
+### Element: rust:xops-dispatch#EventKind
+- module: xops-dispatch
+- consumers: [RP-13, RP-14, RP-15]
+- **恰好五类，仅此五类**（`TRG-001`）：定时 · Git · 手动 · 流程节点被激活 · 上游任务完成。
+- ⚠️ **白名单里永远不加「某张表被写入」**（`TRG-004`）：一旦任务能订阅表的变化，
+  就有了不受深度限制的回路——A 写表触发 B，B 写表触发 A。
+  **这个 enum 没有第六个变体，也不该有。** 解析失败的错误消息会点名这一条，
+  因为它是最常被想要的那个。
+- `self_subscribable`：**后两类不是任务能自己声明订阅的**（`TRG-003`）——
+  「节点被激活」的唯一途径是被某个节点指定为写入者，「上游完成」的唯一途径是被挂在 onComplete 上。
+
+### Element: rust:xops-dispatch#Whitelist
+- module: xops-dispatch
+- consumers: [xopsd]
+- 订阅声明的校验，接在 `xops_task::Tasks` 上。**在创建任务时挡住**——
+  留到运行时才发现，任务已经建出来了。
+
+### Element: rust:xops-task#SubscriptionCheck
+- module: xops-task
+- consumers: [RP-11]
+- 「这个订阅声明合不合法」的注入位。事件白名单归 RP-11，而拦截点在 RP-10 的创建路径上，
+  所以留一个位——**`xops-task` 不认识事件类型，也不该认识**。
+
+### Element: rust:xops-dispatch#Event
+- module: xops-dispatch
+- consumers: [RP-13, RP-14, RP-15]
+- 一个事件。`revision` **覆盖任务定义里写死的那个**；`external_id` 是幂等的依据（`TRG-013`）。
+- `Trigger::Schedule` 带 `configured_by`：`TRG-009` 要求定时触发**能追溯到配置该调度的人**。
+
+### Element: rust:xops-dispatch#Dispatcher
+- module: xops-dispatch
+- consumers: [RP-13, RP-14, RP-15, xopsd]
+- 三条共同纪律（`TRG-007`）各有落点：**非阻塞**（返回的是"进了队列"）·
+  **幂等**（同一外部事件最多一次执行）· **留痕**（被拒绝的、被跳过的同样留痕）。
+- ⚠️ **"被拒绝"不是 `Err`**，它是一条有痕迹的结果。返回 `Err` 的只有底层不可用。
+- `trigger_history` 是 `TSK-016` 的落点：**一个静默被跳过的任务，会让人以为它在跑。**
+- **RP-13 往这里接两类事件源，RP-14 往这里塞「节点被激活」**——它们加的是事件的来源，
+  不是新的事件类型。
+
+### Element: rust:xops-dispatch#WorkspaceSource
+- module: xops-dispatch
+- consumers: [RP-08, xopsd]
+- 「按修订备一份只读工作区」的注入位。**分开是因为那条验收：不依赖 RP-08 也能跑通**——
+  声明"不需要代码仓"的技能，全链路正常，而且**连问都不问一次**。
+
+### Element: rust:xops-dispatch#assemble
+- module: xops-dispatch
+- consumers: [xopsd]
+- 派工单装配。`TSK-015`：**只把技能实际声明的东西放进去，不扩权**。
+- `provenance()` 是那张对照表：**派工单上每个字段对应哪条声明**。
+  字段多了一个而对照表没加一行，测试就红——这就是"不扩权"的那份证明。
+- ⚠️ **自定义出网白名单在 Q10 定下来之前不开放**（`TSK-017`）：技能声明了就**明确拒绝**，
+  不是悄悄清空——悄悄清空会让技能作者以为它生效了。
+
+### Element: rust:xops-dispatch#looks_like_credential
+- module: xops-dispatch
+- consumers: [各包的测试]
+- 派工单里有没有凭据形状的值。**验收要求"检查完整派工单内容"**，所以这条判定要能被跑，
+  而不是靠读代码。它宁可误报也不漏报，`.sock` 也在名单里——
+  socket 等同于模型凭据本身。

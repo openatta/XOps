@@ -584,6 +584,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "xops-dispatch"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xops-audit",
+ "xops-core",
+ "xops-exec",
+ "xops-identity",
+ "xops-mcp",
+ "xops-repo",
+ "xops-skill",
+ "xops-store",
+ "xops-table",
+ "xops-task",
+]
+
+[[package]]
 name = "xops-exec"
 version = "0.1.0"
 dependencies = [

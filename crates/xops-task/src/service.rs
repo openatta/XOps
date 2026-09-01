@@ -25,6 +25,16 @@ pub mod kinds {
     pub const TASK_DISABLED: &str = "task.disabled";
 }
 
+/// 「这个订阅声明合不合法」的注入位。**RP-11 填它。**
+///
+/// 事件白名单归 RP-11（`TRG-001`），而"能不能声明订阅它"要在**创建任务时**挡住——
+/// 留到运行时才发现，任务已经建出来了。本 crate 不认识事件类型，所以留一个位。
+pub trait SubscriptionCheck: Send + Sync + 'static {
+    /// # Errors
+    /// 不在白名单里，或者这一类**不是任务能自己声明订阅的**（`TRG-003`）。
+    fn check(&self, subscription: &str) -> Result<()>;
+}
+
 /// 任务定义与执行策略。
 pub struct Tasks {
     engine: Arc<WriteEngine>,
@@ -33,6 +43,7 @@ pub struct Tasks {
     directory: Arc<Directory>,
     skills: Arc<Skills>,
     clock: Arc<dyn Clock>,
+    subscriptions: Option<Arc<dyn SubscriptionCheck>>,
 }
 
 impl std::fmt::Debug for Tasks {
@@ -58,7 +69,16 @@ impl Tasks {
             directory,
             skills,
             clock,
+            subscriptions: None,
         }
+    }
+
+    /// 接上订阅声明的校验。RP-11 用。**没接就等于不校验订阅**——
+    /// 那只在没有事件源的部署里成立。
+    #[must_use]
+    pub fn with_subscription_check(mut self, check: Arc<dyn SubscriptionCheck>) -> Self {
+        self.subscriptions = Some(check);
+        self
     }
 
     /// 建一个任务。
@@ -77,6 +97,7 @@ impl Tasks {
             return Err(Error::invalid("只能给自己建私有任务"));
         }
         task.check()?;
+        self.check_subscriptions(&task)?;
         self.check_skill(actor, &task)?;
         self.check_on_complete(&task)?;
         self.put(&task, kinds::TASK_CREATED, WriteOp::Insert, actor)?;
@@ -95,6 +116,7 @@ impl Tasks {
             ..task
         };
         task.check()?;
+        self.check_subscriptions(&task)?;
         self.check_skill(actor, &task)?;
         self.check_on_complete(&task)?;
         self.put(&task, kinds::TASK_UPDATED, WriteOp::Update, actor)?;
@@ -202,6 +224,16 @@ impl Tasks {
     }
 
     // ——————————————————————————————— 校验 ———————————————————————————————
+
+    fn check_subscriptions(&self, task: &Task) -> Result<()> {
+        let Some(check) = &self.subscriptions else {
+            return Ok(());
+        };
+        for subscription in &task.subscriptions {
+            check.check(subscription)?;
+        }
+        Ok(())
+    }
 
     fn check_skill(&self, actor: UserId, task: &Task) -> Result<()> {
         let resolved = self.skills.read(actor, task.skill)?;

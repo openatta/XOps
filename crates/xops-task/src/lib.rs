@@ -11,5 +11,5 @@ pub mod task;
 pub mod tools;
 
 pub use policy::{DEFAULT_TOKEN_BUDGET, OnComplete, Overlap, TerminationStep, VersionPolicy};
-pub use service::{TASKS_TABLE, Tasks};
+pub use service::{SubscriptionCheck, TASKS_TABLE, Tasks};
 pub use task::{Kind, Task, TaskId};

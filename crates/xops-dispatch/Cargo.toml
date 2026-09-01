@@ -1,0 +1,24 @@
+[package]
+name = "xops-dispatch"
+description = "事件分发 · 触发 · 派工单装配 · 调度。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+xops-skill.workspace = true
+xops-task.workspace = true
+xops-exec.workspace = true
+xops-repo.workspace = true
+xops-table.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

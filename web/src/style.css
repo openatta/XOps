@@ -1,0 +1,43 @@
+:root {
+  color-scheme: light dark;
+  --line: color-mix(in oklab, currentColor 15%, transparent);
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+body { margin: 0; }
+
+.app { display: grid; grid-template-columns: 16rem 1fr; grid-template-rows: auto 1fr; min-height: 100vh; }
+.top { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; padding: .5rem 1rem; border-bottom: 1px solid var(--line); }
+.me { font-weight: 600; }
+nav { padding: 1rem; border-right: 1px solid var(--line); }
+nav ul { list-style: none; margin: 0 0 1.5rem; padding: 0; }
+nav li button { display: block; width: 100%; text-align: left; padding: .4rem .5rem; border: 0; background: none; cursor: pointer; border-radius: .3rem; font: inherit; }
+nav li button:hover { background: var(--line); }
+nav small { display: block; opacity: .6; font-size: .8em; }
+main { padding: 1rem 1.5rem; overflow: auto; }
+
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; opacity: .8; }
+.who { font-size: .85em; opacity: .75; white-space: nowrap; }
+
+.hint { margin-top: 1.5rem; padding: .75rem 1rem; border: 1px dashed var(--line); border-radius: .4rem; }
+.hint p { margin: 0 0 .5rem; opacity: .8; }
+pre { overflow-x: auto; padding: .6rem .8rem; background: var(--line); border-radius: .3rem; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+
+.detail { margin-top: 2rem; padding-top: 1rem; border-top: 2px solid var(--line); }
+.detail header { display: flex; justify-content: space-between; align-items: baseline; }
+.history, .settlements { list-style: none; padding: 0; }
+.history li, .settlements li { padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.op { font-weight: 600; margin-right: .5rem; }
+time { opacity: .7; margin-right: .5rem; }
+.empty { opacity: .6; }
+.error { color: #c00; }
+
+.login { max-width: 20rem; margin: 15vh auto; display: grid; gap: .75rem; }
+.login label { display: grid; gap: .25rem; }
+.login input { padding: .4rem .5rem; font: inherit; }
+.markdown :first-child { margin-top: 0; }

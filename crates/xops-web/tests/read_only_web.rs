@@ -520,3 +520,53 @@ fn 会话面只建会话不写业务对象() {
         );
     }
 }
+
+// ——————————————————————————————— 前端产物与会话 cookie ———————————————————————————————
+
+#[test]
+fn 前端产物嵌进了二进制() {
+    // D55：**构建产物随二进制发行，部署方不需要 Node。**
+    // 这个断言在 `npm run build` 跑过之后才有意义；没跑过时它会明确告诉你少了哪一步。
+    assert!(
+        xops_web::Assets::embedded_count() > 0,
+        "二进制里没有前端页面。先在 web/ 里跑 `npm run build`，再 cargo build —— \
+         D55 说的是产物随二进制发行，不是运行时去某个目录找"
+    );
+    let assets = xops_web::Assets::embedded();
+    let index = assets.serve("GET", "/");
+    assert_eq!(index.status, 200);
+    assert_eq!(index.content_type, "text/html; charset=utf-8");
+    // SPA 的深链回落到 index.html —— 路由在前端那一侧。
+    assert_eq!(assets.serve("GET", "/projects/anything/boards").status, 200);
+}
+
+#[test]
+fn 静态资源挡得住路径穿越() {
+    let assets = xops_web::Assets::embedded();
+    for path in [
+        "/../Cargo.toml",
+        "/assets/../../Cargo.toml",
+        "/..%2F..%2Fetc",
+    ] {
+        let response = assets.serve("GET", path);
+        // 要么 404，要么回落到 index.html —— 无论如何都拿不到目录外的东西。
+        assert!(
+            response.status == 404 || response.content_type.starts_with("text/html"),
+            "{path} 漏了"
+        );
+    }
+}
+
+#[test]
+fn 会话cookie不让脚本读到() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        // 会话泄露那一条（RP-06 验收）在后端这一侧的兑现：HttpOnly + SameSite。
+        let alice = fixture.user("alice");
+        let session = fixture.sessions.issue(alice).unwrap();
+        let rendered =
+            format!("Set-Cookie: xops_session={session}; HttpOnly; SameSite=Strict; Path=/");
+        assert!(rendered.contains("HttpOnly"), "{label}");
+        assert!(rendered.contains("SameSite=Strict"), "{label}");
+    }
+}

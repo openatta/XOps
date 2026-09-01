@@ -27,6 +27,7 @@ XOps 对外的两个接口面，合成一份记录：**MCP 写入面**（面向 
 | `api:mcp.tool.notice.*` | RP-17（**只有两个**，`NTF-009`） |
 | `api:mcp.tool.template.*` | RP-18 |
 | `api:mcp.tool.xforge.*` | RP-19（**形状由 XForge 定死**，`XFG-010`） |
+| `api:web.*`（前端自己的纪律与渲染约束） | RP-06 |
 
 ## 命名
 
@@ -40,6 +41,9 @@ api:mcp.transport.<形态>                     MCP 的传输面。⚠️ **不�
                                              MCP 与只读 HTTP 不是同一个服务面（RP-03 / RP-05），
                                              混进去会让"http 面里一条写路由都没有"这句话失真
 api:mcp.meta.<字段>                          params._meta 上的带外字段（幂等键这类）
+api:web.<面>.<约束>                          前端自己的约束（渲染子集、只读纪律、没有报表）。
+                                             它不是一个网络接口，但**它是一份要被守住的契约**——
+                                             而契约基线正是记这种东西的地方
 api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路径在前、方法在后、无空白
 ```
 
@@ -321,3 +325,33 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - module: xops-web
 - consumers: [web]
 - 注销。同上。
+
+### Element: api:web.markdown.restricted-subset
+- module: web
+- consumers: [web]
+- **长文本渲染只认一个受限子集**（`BRD-008`）：标题 · 段落 · 无序列表 · 引用 ·
+  围栏代码块 · 行内代码 · 粗体 · 斜体 · 链接（**只认 http/https**）。
+- **刻意不支持**：图片与任何嵌入（"外部资源不自动加载"因此是结构性的）· 表格 ·
+  原始 HTML · 自动链接。不支持的写法一律当**纯文本**。
+- ⚠️ **不引渲染库。** `BRD-008` 自己说了为什么：绝大多数 Markdown 渲染库默认开启内联 HTML，
+  而这些内容部分来自被分析的代码仓——**能往那个仓提交代码的人，就能影响它**。
+- 实现上没有 HTML 字符串这一步：解析成节点树，由 React 渲染成元素。
+  **注入不是被过滤掉的，是没有地方可注。**
+
+### Element: api:web.discipline.no-write-calls
+- module: web
+- consumers: [web]
+- `BRD-005` 第 ② 道：**前端不存在调用写接口的代码路径**，由 `npm run check` 里的
+  `scripts/frontend-discipline.mjs` 枚举全部前端源码来证明。
+- 唯一豁免是 `src/session.ts`（`MCP-013` 的凭据类例外）。**豁免写在检查脚本里，
+  不写在注释里**——"再开一个口子"必须先改那个文件。
+- ⚠️ **顺序不能反**：第 ① 道（后端不存在写路由）在 RP-05。只有 ② 没有 ①，
+  等于把一条安全属性交给前端自觉。
+
+### Element: api:web.discipline.no-reports
+- module: web
+- consumers: [web]
+- `BRD-002` / `BRD-003`：**没有报表。** 同一个检查脚本枚举视图与依赖，
+  挡住图表库、`<canvas>` 与 chart 字样。
+- 判断标准很直白：**如果有一天需要在平台代码里写"什么是缺陷密度"，那就越界了**——
+  而它最先会以一个图表库的 import 出现。

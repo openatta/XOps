@@ -536,5 +536,14 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 ### Element: rust:xops-web#Assets
 - module: xops-web
 - consumers: [xopsd, RP-06]
-- 静态资源托管。**前端的构建产物随二进制发行**（D55），部署方不需要 Node。
+- 静态资源托管。三种形态：不带页面 · **编译期嵌入（发行形态）** · 运行时目录（开发用）。
 - SPA 的深链回落到 `index.html`；路径穿越被挡在段级检查上。
+
+### Element: rust:xops-web#Assets::embedded
+- module: xops-web
+- consumers: [xopsd]
+- **前端产物在编译期嵌进二进制**（D55：部署方不需要 Node）。不是"运行时去某个目录找"——
+  `build.rs` 走一遍 `web/dist`，把每个文件 `include_bytes!` 进来。
+- `web/dist` 不在时嵌一张空表，`cargo build` 照样过，但**会打一条 warning**：
+  它不该悄悄地过。
+- `Assets::Directory` 是开发时的形态：改一行页面不用重编 Rust。

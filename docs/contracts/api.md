@@ -446,3 +446,49 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
   **不为模板开一条更松的路。**
 - 撞名**明确失败，不覆盖**；中途失败会把这次已经建出来的表撤掉。
 - 实例化之后它们就是**普通的表、流程和插件**，想怎么改就怎么改（`TPL-004`）。
+
+### Element: api:mcp.tool.submit-approval-request
+- module: xops-xforge
+- consumers: [xforge]
+- ⚠️ **tool 的实际名字是 `submit_approval_request`**——带下划线、不合 `<域>.<动作>`。
+  **形状由 XForge 定死，XOps 没有任何设计自由度，只有实现义务**（`XFG-007`、`XFG-010`）。
+  它由 `rust:xops-mcp#ToolName` 里那张写死的白名单放行。
+- 参数照抄规格：`change` · `flow` · `stage` · `transition` · `policyId` ·
+  `revision{stateRevision, contentRevision, policySnapshotDigest, gitBase, gitHead}` ·
+  `governingDigest` · `roles` · `reason`。
+- 处理：**由仓绑定定位项目（找不到 → 明确失败）→ 由 policyId + roles 映射到流程
+  （找不到 → 明确失败）→ 按 `governingDigest` 幂等发起实例（主体 = `governingDigest`）
+  → 立即返回**（`XFG-011`）。**不得重复开单。**
+- `gitHead` **同时作为主体修订**（`XFG-012`）。`reason` 是不可信自由文本，
+  **原样保存，不解析**（`XFG-016`）。
+- 回话是**一个 `text` content item，不带 `structuredContent`**（`XFG-009`）。
+- ⚠️ **发起者 = 调用所用令牌的持有人**：职责分离整个压在这上面，
+  **共用一个令牌会让它整体失效且无声**（`XFG-005`）。
+- ⚠️ **任何"优化"都是破坏性变更**，要走 `DECISIONS.yaml`。
+
+### Element: api:mcp.tool.poll-approval
+- module: xops-xforge
+- consumers: [xforge]
+- ⚠️ **实际名字是 `poll_approval`**，同上：形状定死，没有设计自由度（`XFG-008`）。
+- **必须立即返回，绝不阻塞**；**纯读、无副作用、可安全重复调用**（`XFG-013`、`XFG-014`）。
+- 三种回话：未决 → `pending`；已决 → `decided` + `decision` + `approver{id, role}` +
+  `reason`；**从未提交过 → 明确的未知状态，不是报错**——XForge 会整轮重试，
+  **必须对重试安全**。
+- `approver` 由结算行的 `writtenBy` 解析（`XFG-004`）；`role` 是 **XOps 自己的
+  三个角色名**（`XFG-019`）。
+- ⚠️ **首版不返回 `expiresAt`**：`Q12` 未定。规格里它是可选的——
+  **要与 XForge 侧确认它接受缺席**。
+- 回话同样**不带 `structuredContent`**。
+
+### Element: api:mcp.tool.xforge.register
+- module: xops-xforge
+- consumers: [agent]
+- 登记 `policyId → 哪条流程 + 结果列映射`。**挂在仓绑定上，不另开一套对象**
+  （`XFG-002`、`RPO-014`）。
+- **角色自校验就在这一步**（`XFG-015`）：配一个 XOps 不会返回的角色名当场失败——
+  不是等到"告诉人类他的批准生效了"之后。
+
+### Element: api:mcp.tool.xforge.registration
+- module: xops-xforge
+- consumers: [agent]
+- 看这个项目的 XForge 登记。

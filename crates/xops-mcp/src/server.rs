@@ -259,11 +259,20 @@ impl McpServer {
             &self.audit,
         );
         let value = tool.call(&context)?;
-        let result = json!({
-            "content": [{"type": "text", "text": value.to_string()}],
-            "structuredContent": value,
-            "isError": false,
-        });
+        let result = if tool.spec().text_only() {
+            // `XFG-009`：**一个 `text` 类型的 content item，其 text 是一段 JSON 字符串
+            // ——不使用 `structuredContent`。** 形状由外部规格定死，这里不多给。
+            json!({
+                "content": [{"type": "text", "text": value.to_string()}],
+                "isError": false,
+            })
+        } else {
+            json!({
+                "content": [{"type": "text", "text": value.to_string()}],
+                "structuredContent": value,
+                "isError": false,
+            })
+        };
 
         // ⑧ 记幂等
         if let Some(key) = key.as_deref() {

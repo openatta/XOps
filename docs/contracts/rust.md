@@ -314,10 +314,11 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-mcp#ToolSpec
 - module: xops-mcp
-- consumers: [RP-04 起各包]
-- 五样声明。**没有公开构造方式**，只能经 `ToolSpec::builder`，少一样就 `build()` 不出来。
-- 本次多一样可选的：`scoped_to(project)`——只属于某个项目的 tool（表专属的那些）。
-  不声明就是"到处都在"。
+- consumers: [全部 tool]
+- **新增 `text_only`**：回话只给一个 `text` 类型的 content item，
+  **不带 `structuredContent`**（`XFG-009`）。
+- ⚠️ **别的 tool 一律不要打开它**——`structuredContent` 是调用方少写一次
+  `JSON.parse` 的地方。默认关着，有测试盯着默认值。
 
 ### Element: rust:xops-mcp#Tool
 - module: xops-mcp
@@ -1226,3 +1227,63 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 平台自带三个：**bugs · issues · approvals**（`TPL-003`、`TPL-008`）。
 - ⚠️ **approvals 的结算表列名直接决定 RP-19 那边的结果列映射**能不能拼出
   `poll_approval` 的返回值——两包要一起看。
+
+### Element: rust:xops-xforge#Registration
+- module: xops-xforge
+- consumers: [xopsd]
+- `policyId → 流程 + 结果列映射`（`XFG-003`）。**没有结果列映射，适配层拼不出
+  `poll_approval` 的返回值。**
+- **它没有自己的表**：序列化之后放进 `Binding.xforge`——`RPO-014` 早就留好了那个位子。
+- `XOPS_ROLES` 是 XOps 会返回的角色名，**恰好三个**（`XFG-019`）。
+  ⚠️ **不要为了迁就 XForge 侧的某条 policy 把 XOps 改成可配置角色系统**——
+  两条出路是"约定只用这三个名字"或"日后在绑定上加一张三五行的映射表"。
+
+### Element: rust:xops-xforge#XForge
+- module: xops-xforge
+- consumers: [xopsd]
+- 两个 tool 的处理与登记的读写。
+- ⚠️ **这里一处降级都没有**（`XFG-020`）：查不到项目、查不到登记、查不到流程，
+  一律**明确失败**——让调用方看到一个能重试的错误，
+  而不是一个看起来成功的空结果。**"连不上就跳过"会让变更被静默放行。**
+- `submit` 按 `governingDigest` 幂等；`poll` 立即返回，三种状态。
+
+### Element: rust:xops-xforge#resolve
+- module: xops-xforge
+- consumers: [xopsd]
+- 从结算行的 `writtenBy` 解析 approver（`XFG-004`）：**人 → 就是他；执行 →
+  那个私有任务的所有者；插件求值 → 安装该插件的维护者**；平台写的行没有负责人。
+- 三种都**不需要回查别的表**——`WrittenBy` 把该内联的都内联了（`TBL-016`）。
+  那些字段存在的理由正是"一个月后 `_runs` 那行没了，还要回答得出这一票是谁的"。
+
+### Element: rust:xops-xforge#scaffold
+- module: xops-xforge
+- consumers: [xopsd, 运维]
+- XForge 侧配套四样的模板，以及**检出 ③④ 缺失**的检查（`XFG-021`、`XFG-022`）。
+- ⚠️ **③④ 缺了会静默失效**：`xforge doctor` 对未被引用的扩展资源只警告、从不阻塞，
+  于是 provider 装好了、连得上、却没有任何一条 Flow 引用它——
+  **这道审批门等于不存在，而一切看起来都正常**。
+- ⚠️ 检查的口径是"这几个名字在不在文本里"，**不是一次 YAML 解析**：
+  它证明得了**缺失**（`XFG-022` 要的就是这个），证明不了"结构完全正确"。
+
+### Element: rust:xops-flow#Flows::find_by_subject
+- module: xops-flow
+- consumers: [RP-19]
+- 按主体找实例。**`XFG-011` 的幂等靠它**：同一个 `governingDigest` 重复提交，
+  **不得开出第二个实例**。
+
+### Element: rust:xops-repo#Repos::set_xforge
+- module: xops-repo
+- consumers: [RP-19]
+- 写下 XForge 登记。**挂在仓绑定上，不另开一套对象**（`RPO-014`）。
+  没绑仓时**明确失败，绝不静默创建**（`XFG-002`）。
+
+### Element: rust:xops-mcp#ToolName
+- module: xops-mcp
+- consumers: [全部 tool]
+- tool 名的形状：`<域>.<动作>`，小写字母开头，只含小写字母、数字与连字符。
+- **`EXTERNAL_NAMES` 是一张写死的白名单**，放行两个**由外部规格定死**的 tool 名
+  （`submit_approval_request` · `poll_approval`）。它们带下划线、不合上面那条形状——
+  **`XFG-010` 写得很直白：XOps 没有任何设计自由度，只有实现义务。**
+- ⚠️ **它是白名单，不是开关。** 它挡住的正是"以后再往里加一个"：
+  加一条要有一份同样级别的外部规格，**而那件事在代码审查里看得见**。
+  别的名字规则一个字没改：`submit_anything` 照拒。

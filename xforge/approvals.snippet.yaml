@@ -1,0 +1,12 @@
+# ③ approvals.providers[] 条目（XFG-021 ③）。
+# 缺了会**静默失效**——`xforge doctor` 只警告不阻塞。
+#
+# ⚠️ roles 与 **XOps 实际返回的角色**对齐（XFG-019）：只有这三个。
+# 写一个 XOps 不会返回的名字（比如 verifier），校验将永远失败且无法绕过。
+approvals:
+  providers:
+    - id: xops
+      mcpServer: xops-approvals
+      submitTool: submit_approval_request
+      pollTool: poll_approval
+      roles: [owner, maintainer, member]

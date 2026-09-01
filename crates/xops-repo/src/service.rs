@@ -146,6 +146,28 @@ impl Repos {
         Ok(binding)
     }
 
+    /// 写下 XForge 登记（`RPO-014` / `XFG-002`）。
+    ///
+    /// **它挂在仓绑定上，不另开一套对象**——内容归 RP-19，本包只负责存取。
+    ///
+    /// # Errors
+    /// 没权限 · 这个项目还没绑仓（**明确失败，绝不静默创建**）。
+    pub fn set_xforge(
+        &self,
+        actor: UserId,
+        project: ProjectId,
+        registration: serde_json::Value,
+    ) -> Result<Binding> {
+        self.directory
+            .authorize(actor, project, Action::BindRepository)?;
+        let mut binding = self
+            .binding(project)?
+            .ok_or_else(|| Error::not_found("这个项目还没绑仓"))?;
+        binding.xforge = Some(registration);
+        self.persist(&binding, kinds::REPO_BOUND, WriteOp::Update, actor)?;
+        Ok(binding)
+    }
+
     /// 解绑。**已备好的工作区按各自生命周期结束**——它们的析构会收拾自己。
     ///
     /// # Errors

@@ -1,0 +1,5 @@
+# ② 它在 manifest.yaml 的 scaffold.mcpServers 里的登记（XFG-021 ②）。
+# 缺了会**加载失败**——看得见。
+scaffold:
+  mcpServers:
+    - xops-approvals

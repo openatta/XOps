@@ -1,0 +1,11 @@
+# ④ 某条 Flow 的 approvalPolicies[].providers 里**引用这个 provider id**（XFG-021 ④）。
+#
+# ⚠️ **这一条是最容易漏、也最危险的一条。** 漏了它：provider 装好了、连得上、
+# 却没有任何一条 Flow 引用它——**这道审批门等于不存在，而一切看起来都正常**。
+# `xforge doctor` 不会拦你。本仓的 `xops_xforge::scaffold::missing` 会。
+#
+# policyId 要与 XOps 侧 `xforge.register` 登记的那个一致，
+# 否则 submit 会**明确失败**（XFG-002：绝不静默创建）。
+approvalPolicies:
+  - id: release-approval
+    providers: [xops]

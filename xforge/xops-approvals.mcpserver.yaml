@@ -1,0 +1,11 @@
+# ① McpServer 资源（XFG-021 ①）。缺了会**加载失败**——看得见。
+kind: McpServer
+metadata:
+  name: xops-approvals
+spec:
+  transport: http
+  url: https://xops.example.internal/mcp
+  # ⚠️ 令牌走环境变量名，**不写在这里**。
+  # 每个开发者填自己的那一个（XFG-005）——共用一个会让职责分离整体失效且无声。
+  authTokenEnv: XOPS_TOKEN
+  timeoutSeconds: 30

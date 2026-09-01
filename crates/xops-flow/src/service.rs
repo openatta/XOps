@@ -338,6 +338,26 @@ impl Flows {
         Ok(out)
     }
 
+    /// 按主体找实例。
+    ///
+    /// **`XFG-011` 的幂等靠它**：同一个 `governingDigest` 重复提交，
+    /// **不得开出第二个实例**——`governingDigest` 到实例是一一映射。
+    ///
+    /// # Errors
+    /// 底层不可用。
+    pub fn find_by_subject(
+        &self,
+        project: ProjectId,
+        kind: &str,
+        id: &str,
+    ) -> Result<Option<Instance>> {
+        Ok(self.all_instances()?.into_iter().find(|instance| {
+            instance.project == project
+                && instance.subject.kind == kind
+                && instance.subject.id == id
+        }))
+    }
+
     /// 一条流程的全部版本。
     ///
     /// # Errors

@@ -24,13 +24,26 @@ use crate::schema::Schema;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ToolName(String);
 
+/// **由外部规格定死的 tool 名。恰好这两个。**
+///
+/// 它们不合 `<域>.<动作>` 的形状，也带着下划线——但 `XFG-010` 写得很直白：
+///
+/// > 两个 tool 的名字与参数由 XForge 定死，**XOps 没有任何设计自由度，只有实现义务**。
+///
+/// ⚠️ **这是一张写死的白名单，不是一个开关。** 它挡住的正是"以后再往里加一个"：
+/// 加一条要有一份同样级别的外部规格，而那件事在代码审查里看得见。
+pub const EXTERNAL_NAMES: [&str; 2] = ["submit_approval_request", "poll_approval"];
+
 impl ToolName {
     pub const MAX_LEN: usize = 64;
 
     /// # Errors
-    /// 不是 `<域>.<动作>` 的形状。
+    /// 不是 `<域>.<动作>` 的形状，**且不在 [`EXTERNAL_NAMES`] 里**。
     pub fn new(name: impl Into<String>) -> Result<Self> {
         let name = name.into();
+        if EXTERNAL_NAMES.contains(&name.as_str()) {
+            return Ok(Self(name));
+        }
         let segments: Vec<&str> = name.split('.').collect();
         let shaped = name.len() <= Self::MAX_LEN
             && segments.len() >= 2
@@ -103,6 +116,12 @@ pub struct ToolSpec {
     audit: EventKind,
     /// 只属于某个项目的 tool（表专属的那些）。`None` 表示到处都在。
     project: Option<ProjectId>,
+    /// 回话**只给一个 `text` 类型的 content item，不带 `structuredContent`**。
+    ///
+    /// 这一位存在的唯一理由是 `XFG-009`：那两个 tool 的返回值形状由 XForge 定死。
+    /// **别的 tool 一律不要打开它**——`structuredContent` 是调用方少写一次
+    /// `JSON.parse` 的地方。
+    text_only: bool,
 }
 
 impl ToolSpec {
@@ -116,6 +135,7 @@ impl ToolSpec {
             idempotency: None,
             audit: None,
             project: None,
+            text_only: false,
         }
     }
 
@@ -137,6 +157,12 @@ impl ToolSpec {
     #[must_use]
     pub fn requirement(&self) -> Requirement {
         self.requirement
+    }
+
+    /// 回话只给一个 `text` content item（`XFG-009`）。
+    #[must_use]
+    pub const fn text_only(&self) -> bool {
+        self.text_only
     }
 
     #[must_use]
@@ -186,6 +212,7 @@ pub struct ToolSpecBuilder {
     idempotency: Option<Idempotency>,
     audit: Option<String>,
     project: Option<ProjectId>,
+    text_only: bool,
 }
 
 impl ToolSpecBuilder {
@@ -229,6 +256,15 @@ impl ToolSpecBuilder {
 
     /// # Errors
     /// 五样里少了任何一样，或者名字 / 事件类型不合形状。
+    /// 回话**不带 `structuredContent`**（`XFG-009`）。
+    ///
+    /// ⚠️ **只给那两个形状定死的 tool 用。**
+    #[must_use]
+    pub const fn text_only(mut self) -> Self {
+        self.text_only = true;
+        self
+    }
+
     pub fn build(self) -> Result<ToolSpec> {
         let missing = |what: &str| {
             Error::invalid(format!(
@@ -244,6 +280,7 @@ impl ToolSpecBuilder {
             idempotency: self.idempotency.ok_or_else(|| missing("幂等性"))?,
             audit: EventKind::new(self.audit.ok_or_else(|| missing("留痕形状"))?)?,
             project: self.project,
+            text_only: self.text_only,
         })
     }
 }
@@ -576,5 +613,42 @@ mod tests {
         assert!(!allows(&spec, Some(Role::Member), false));
         assert!(!allows(&spec, None, false), "不是成员就不该看见");
         assert!(!allows(&spec, Some(Role::Owner), true), "归档项目里写不了");
+    }
+
+    #[test]
+    fn 外部规格定死的两个名字放行别的不放() {
+        // `XFG-010`：XOps 对这两个名字**没有任何设计自由度，只有实现义务**。
+        assert_eq!(EXTERNAL_NAMES.len(), 2, "白名单就这两条");
+        for name in EXTERNAL_NAMES {
+            assert!(ToolName::new(name).is_ok(), "{name}");
+        }
+        // **它是白名单，不是开关**：别的下划线名字照拒。
+        assert!(ToolName::new("submit_anything").is_err());
+        assert!(ToolName::new("poll").is_err());
+        assert!(ToolName::new("project.create").is_ok());
+    }
+
+    #[test]
+    fn 只有显式声明过的tool才不带structuredcontent() {
+        let plain = ToolSpec::builder("project.create")
+            .summary("建项目")
+            .input(Schema::new())
+            .requires(Requirement::Platform)
+            .idempotency(Idempotency::Keyed)
+            .audits("project.created")
+            .build()
+            .unwrap();
+        assert!(!plain.text_only(), "默认带 structuredContent");
+
+        let external = ToolSpec::builder("poll_approval")
+            .summary("查审批")
+            .input(Schema::new())
+            .requires(Requirement::Platform)
+            .idempotency(Idempotency::ReadOnly)
+            .audits("xforge.approval.polled")
+            .text_only()
+            .build()
+            .unwrap();
+        assert!(external.text_only(), "XFG-009");
     }
 }

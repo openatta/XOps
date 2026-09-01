@@ -685,6 +685,11 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   `xforge` 那个位已经留好，内容归 RP-19。
 - 远端地址里**不许带凭据**：`https://token@host/x.git` 会让凭据跟着 URL 进日志、
   进错误消息、进 `git remote -v`。
+- **新增** `webhook_secret`（密文，可空）：Git webhook 的验签密钥，**按项目一把**。
+  一把平台级的密钥意味着任何拿到它的人都能给**每一个**项目投递事件，
+  而 webhook 端点是无凭据的公网入口。**密钥的作用面不能比它守的东西大。**
+- 没设就是**这个项目收不到 webhook**，与没绑仓一样回"不存在"（`TRG-012`）。
+- 存的时候 `#[serde(default)]`：**存量绑定读得回来**，读回来是"没设"。
 
 ### Element: rust:xops-repo#Repos
 - module: xops-repo
@@ -1037,6 +1042,8 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   - `expire_due` —— 到期那批（`FLW-017`）
 - 写的顺序是**先事件后投影**：反过来会出现"索引里有、账上没有"。
 - 构造函数因此多一个 `Relations`，并且**返回 `Result`**（要声明那张投影）。
+- `define` / `disable` 现在**在 MCP 上有入口**（`api:mcp.tool.flow.define` / `.disable`）。
+  在此之前能到 `define` 的只有模板实例化那一条路，而 `FLW-001` 说的是"经 MCP 创建"。
 
 ### Element: rust:xops-flow#NodeActivated
 - module: xops-flow
@@ -1325,6 +1332,8 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 从环境变量读的一份启动配置。**没有配置文件格式**——单实例部署，环境变量够了。
 - ⚠️ **加密密钥没有默认值**：空的时候装配拒绝起来。
   **一个写死的默认密钥看起来是加密的，实际不是**——那比没有密钥更糟。
+- **移除** `webhook_secret` / `XOPS_WEBHOOK_SECRET`：验签密钥改为按项目存在仓绑定上。
+  见 `DECISIONS.yaml#cbc-platform-webhook-secret`。
 
 ### Element: rust:xopsd#assemble
 - module: xopsd
@@ -1636,3 +1645,21 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [xopsd]
 - 四条后台循环：落账 500ms · 定时 5s · 实例过期 60s · 保留期 1h。
 - 睡眠切片，**停机不被最长的那条拖住**。
+
+### Element: rust:xops-repo#Repos::set_webhook_secret
+- module: xops-repo
+- consumers: [xopsd]
+- 设这个项目的 Git webhook 验签密钥。设过再设就是换一把。
+- **这个项目还没绑仓就明确失败**，绝不静默创建一条绑定。
+
+### Element: rust:xops-repo#Repos::webhook_source
+- module: xops-repo
+- consumers: [xopsd]
+- 这次投递是**哪个项目**的：逐个绑定试验签，签得过的那一个就是。
+- ⚠️ **先验签再认项目，而不是先按仓名找项目再验签**（`TRG-012`）。
+  按仓名找会开一条探测信道：同一个仓名，绑过的与没绑过的走的分支不一样。
+  这里两种情形都是"从头试到尾、一个都没过"。
+- ⚠️ **命中之后不提前退出**：验了几次要与命中的是第几个无关，那是能从耗时上读出来的。
+- ⚠️ **一次投递最多命中一个项目。** 平台级一把密钥的那版是发给**所有**绑过仓的项目的——
+  A 仓的一次 push 会触发 B 项目的任务。
+- **没验过不是错误**，是 `Ok(None)`——调用方对两者的回应必须一样。

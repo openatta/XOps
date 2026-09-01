@@ -487,3 +487,246 @@ fn 每一条注入位都在装配层被填上() {
         missing.join("\n")
     );
 }
+
+// ——————————————————————— 流程定义经 MCP 创建（FLW-001）———————————————————————
+
+/// 一次 tool 调用，失败就地报出来。
+fn call(port: u16, token: &str, name: &str, arguments: Value) -> Value {
+    let response = rpc(
+        port,
+        Some(token),
+        &json!({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }),
+    );
+    assert!(
+        response["error"].is_null(),
+        "调 {name} 失败了：{}",
+        response["error"]
+    );
+    response["result"]["structuredContent"].clone()
+}
+
+/// 一次 tool 调用，**期望它失败**，返回那条消息。
+fn call_err(port: u16, token: &str, name: &str, arguments: Value) -> String {
+    let response = rpc(
+        port,
+        Some(token),
+        &json!({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }),
+    );
+    assert!(
+        !response["error"].is_null(),
+        "调 {name} 本该失败：{response}"
+    );
+    response["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned()
+}
+
+fn 建一个项目(port: u16, token: &str, slug: &str) -> String {
+    call(
+        port,
+        token,
+        "project.create",
+        json!({"slug": slug, "displayName": slug}),
+    )["project"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn 流程定义经mcp创建并且真的能跑() {
+    // `FLW-001`：**不存在流程设计器界面**——定义经 MCP 创建。
+    // 这条以前是断的：`Flows::define` 一直都在，**只有模板实例化那一条路能到它**。
+    let assembled = assemble(&config()).unwrap();
+    let port = serve_mcp(&assembled);
+    let alice = token(&assembled, "alice");
+    let bob = token(&assembled, "bob");
+    let project = 建一个项目(port, &alice, "flowdef");
+
+    let bob_id = call(port, &bob, "identity.whoami", json!({}))["user"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    call(
+        port,
+        &alice,
+        "member.set",
+        json!({"project": project, "user": bob_id, "role": "member"}),
+    );
+
+    // 结算表：谁对它做了什么表态。
+    call(
+        port,
+        &alice,
+        "table.create",
+        json!({
+            "project": project, "table": "votes",
+            "columns": [
+                {"name": "decision", "type": "enum", "enumValues": ["yes", "no"], "required": true},
+            ],
+        }),
+    );
+
+    let defined = call(
+        port,
+        &alice,
+        "flow.define",
+        json!({
+            "project": project,
+            "name": "两道",
+            "settlementTable": "votes",
+            "steps": [
+                [{
+                    "name": "初审",
+                    "pass": [{"op": "equals", "column": "decision", "value": "yes"}],
+                    "reject": [{"op": "equals", "column": "decision", "value": "no"}],
+                    "writerRoles": ["member", "maintainer", "owner"],
+                    "separationOfDuties": true,
+                }],
+            ],
+        }),
+    );
+    assert_eq!(defined["version"], 1, "版本号由平台排");
+    assert_eq!(defined["state"], "published");
+    let flow = defined["flow"].as_str().unwrap().to_owned();
+
+    // 发起 → 结算 → 通过。**这条链以前只有模板能走通。**
+    let instance = call(
+        port,
+        &alice,
+        "flow.start",
+        json!({
+            "project": project, "flow": flow, "version": 1,
+            "subjectKind": "release", "subjectId": "v1",
+        }),
+    )["instance"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // ⚠️ 职责分离是**参数里显式打开的那一个**：alice 是发起人，她自己投不算数。
+    call(
+        port,
+        &alice,
+        "flow.settle",
+        json!({"project": project, "instance": instance, "values": r#"{"decision":"yes"}"#}),
+    );
+    let after_self = call(
+        port,
+        &alice,
+        "flow.status",
+        json!({"project": project, "instance": instance}),
+    );
+    assert_eq!(
+        after_self["state"], "running",
+        "发起人自己投不算数（FLW-026③）——这说明定义里的 separationOfDuties 真的到了求值那一侧"
+    );
+
+    call(
+        port,
+        &bob,
+        "flow.settle",
+        json!({"project": project, "instance": instance, "values": r#"{"decision":"yes"}"#}),
+    );
+    let after_bob = call(
+        port,
+        &alice,
+        "flow.status",
+        json!({"project": project, "instance": instance}),
+    );
+    assert_eq!(after_bob["state"], "approved", "第二个人投了才算数");
+
+    // 停用之后发不起新实例（`FLW-006`）。
+    call(
+        port,
+        &alice,
+        "flow.disable",
+        json!({"project": project, "flow": flow, "version": 1}),
+    );
+    let refused = call_err(
+        port,
+        &alice,
+        "flow.start",
+        json!({
+            "project": project, "flow": flow, "version": 1,
+            "subjectKind": "release", "subjectId": "v2",
+        }),
+    );
+    assert!(!refused.is_empty(), "停用之后发不起新实例");
+}
+
+#[test]
+fn 流程定义的参数是逐字段声明的不是一整份json() {
+    // `MCP-004`：打错一个键名要被**拒绝**，不能静默丢掉。
+    // 流程定义里最怕静默丢掉的正是 `separationOfDuties`——
+    // **少了它没有任何症状，只是审批不再需要第二个人。**
+    let assembled = assemble(&config()).unwrap();
+    let port = serve_mcp(&assembled);
+    let alice = token(&assembled, "alice");
+    let project = 建一个项目(port, &alice, "narrow");
+    call(
+        port,
+        &alice,
+        "table.create",
+        json!({
+            "project": project, "table": "votes",
+            "columns": [{"name": "decision", "type": "text", "maxLen": 8, "required": true}],
+        }),
+    );
+
+    let typo = call_err(
+        port,
+        &alice,
+        "flow.define",
+        json!({
+            "project": project, "name": "打错了", "settlementTable": "votes",
+            "steps": [[{
+                "name": "初审",
+                "pass": [{"op": "equals", "column": "decision", "value": "yes"}],
+                "writerRoles": ["member"],
+                "separationOfDudies": true,
+            }]],
+        }),
+    );
+    assert!(
+        typo.contains("separationOfDudies"),
+        "打错的键名要被指出来，实际是：{typo}"
+    );
+}
+
+#[test]
+fn 没有项目设过密钥时webhook端点不是探测器() {
+    // `TRG-012`：验签失败、没有这个项目、没接落点 —— **三种回同一个东西**。
+    // 平台级那把密钥拿掉之后，这条尤其要成立:一个全新部署里没有任何项目设过密钥，
+    // 端点这时的回应不能与"设过但签错了"有半点差别。
+    let assembled = assemble(&config()).unwrap();
+    let port = serve_web(&assembled);
+    let body = r#"{"ref":"refs/heads/main"}"#;
+    let mut seen = std::collections::BTreeSet::new();
+    for signature in ["sha256=00", "sha256=deadbeef", ""] {
+        let response = http(
+            port,
+            &format!(
+                "POST /webhooks/git HTTP/1.1\r\nHost: localhost\r\n\
+                 X-Hub-Signature-256: {signature}\r\nX-GitHub-Event: push\r\n\
+                 X-GitHub-Delivery: d-1\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        );
+        let status = response.lines().next().unwrap_or_default().to_owned();
+        seen.insert((status, body_of(&response).to_owned()));
+    }
+    assert_eq!(seen.len(), 1, "三种情形的回应要逐字一致，实际有 {seen:#?}");
+    assert!(
+        seen.iter().next().unwrap().0.contains("404"),
+        "回的是「不存在」"
+    );
+}

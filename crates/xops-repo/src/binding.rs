@@ -24,6 +24,15 @@ pub struct Binding {
     /// 上次拉取的时刻与修订（`RPO-012`）。
     pub last_fetch_at: Option<Timestamp>,
     pub last_revision: Option<String>,
+    /// Git webhook 的验签密钥，**密文**（`TRG-012`）。
+    ///
+    /// ⚠️ **它按项目存，不是平台一把。** 一把平台级的密钥意味着任何一个能拿到它的人
+    /// 都能给**每一个**项目投递事件——而 webhook 端点是无凭据的公网入口，
+    /// 那把密钥就是它唯一的门。密钥的作用面必须和它守的东西一样大，不能更大。
+    ///
+    /// 没设就是**这个项目收不到 webhook**，与没绑仓一样回"不存在"（`TRG-012`）。
+    #[serde(default)]
+    pub webhook_secret: Option<SealedCredential>,
     /// XForge 登记：`policyId → 流程 + 结果列映射` 挂在这里（`RPO-014` / `XFG-002`）。
     /// 本包只留位，内容归 RP-19。
     pub xforge: Option<serde_json::Value>,
@@ -51,6 +60,7 @@ impl Binding {
             bound_at,
             last_fetch_at: None,
             last_revision: None,
+            webhook_secret: None,
             xforge: None,
         })
     }

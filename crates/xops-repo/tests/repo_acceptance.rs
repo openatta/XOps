@@ -34,8 +34,9 @@ impl GitPlatform for FakePlatform {
         Ok(self.probe)
     }
 
-    fn verify_webhook(&self, _secret: &str, _body: &[u8], _signature: &str) -> bool {
-        false
+    /// 试写是假的，**验签是真的**——按项目分密钥这件事要验的就是 HMAC 那一步。
+    fn verify_webhook(&self, secret: &str, body: &[u8], signature: &str) -> bool {
+        xops_repo::GitHub.verify_webhook(secret, body, signature)
     }
 }
 
@@ -568,4 +569,111 @@ fn 工作区里没有凭据也没有那份配置() {
     drop(workspace);
     let _ = fs::remove_dir_all(&repo);
     let _ = fs::remove_dir_all(&parent);
+}
+
+// ————————————————————— webhook 验签密钥按项目一把（TRG-012）—————————————————————
+
+fn signature(secret: &str, body: &[u8]) -> String {
+    use std::process::Stdio;
+    let mut child = Command::new("openssl")
+        .args(["dgst", "-sha256", "-hmac", secret])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("要有 openssl");
+    use std::io::Write;
+    child.stdin.as_mut().unwrap().write_all(body).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    format!("sha256={}", text.rsplit(' ').next().unwrap().trim())
+}
+
+#[test]
+fn webhook密钥按项目一把_一次投递最多命中一个项目() {
+    // ⚠️ 这条挡的是原先那版:一把**平台级**密钥验完签，就把事件发给
+    // **所有**绑过仓的项目——A 仓的一次 push 会触发 B 项目的任务。
+    // 密钥的作用面必须和它守的东西一样大，不能更大。
+    let fixture = fixture(WriteProbe::ReadOnly);
+    let (alice, first) = fixture.owner();
+    let second = fixture
+        .directory
+        .create_project(alice, Slug::new("second").unwrap(), "第二个")
+        .unwrap()
+        .id;
+
+    fixture
+        .repos
+        .bind(alice, first, "https://host/one.git", Secret::new("t1"))
+        .unwrap();
+    fixture
+        .repos
+        .bind(alice, second, "https://host/two.git", Secret::new("t2"))
+        .unwrap();
+    fixture
+        .repos
+        .set_webhook_secret(alice, first, &Secret::new("密钥一"))
+        .unwrap();
+    fixture
+        .repos
+        .set_webhook_secret(alice, second, &Secret::new("密钥二"))
+        .unwrap();
+
+    let body = br#"{"ref":"refs/heads/main"}"#;
+    let matched = fixture
+        .repos
+        .webhook_source(body, &signature("密钥一", body))
+        .unwrap()
+        .expect("第一个项目的密钥该验得过");
+    assert_eq!(matched.project, first, "**只命中签名对上的那一个项目**");
+
+    let other = fixture
+        .repos
+        .webhook_source(body, &signature("密钥二", body))
+        .unwrap()
+        .expect("第二个项目的密钥也该验得过");
+    assert_eq!(other.project, second, "两个项目各认各的密钥");
+
+    // 谁的密钥都不是 —— **不是错误，是"没有"**。调用方对两者的回应必须一样。
+    assert!(
+        fixture
+            .repos
+            .webhook_source(body, &signature("猜的", body))
+            .unwrap()
+            .is_none(),
+        "签不上就是没有"
+    );
+}
+
+#[test]
+fn 没设webhook密钥的项目收不到投递() {
+    // **没设就是这个项目收不到 webhook**——它不该退回到某个平台级的默认密钥，
+    // 那正是"作用面比它守的东西大"的那种默认。
+    let fixture = fixture(WriteProbe::ReadOnly);
+    let (alice, project) = fixture.owner();
+    fixture
+        .repos
+        .bind(alice, project, "https://host/one.git", Secret::new("t"))
+        .unwrap();
+
+    let body = br#"{"ref":"refs/heads/main"}"#;
+    for guess in ["", "空", "密钥"] {
+        assert!(
+            fixture
+                .repos
+                .webhook_source(body, &signature(guess, body))
+                .unwrap()
+                .is_none(),
+            "绑了仓但没设密钥，任何签名都不该命中（试的是 {guess:?}）"
+        );
+    }
+    assert!(
+        fixture
+            .repos
+            .status(alice, project)
+            .unwrap()
+            .unwrap()
+            .webhook_secret
+            .is_none(),
+        "状态里看得出来没设"
+    );
 }

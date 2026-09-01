@@ -126,6 +126,30 @@ repo_tool!(
     }
 );
 
+repo_tool!(
+    SetWebhookSecret,
+    "repo.webhook-secret",
+    "设这个项目的 Git webhook 验签密钥。**按项目一把，不是平台一把**",
+    Schema::new().field(project_field()).field(Field::required(
+        "secret",
+        FieldType::Text { max_len: 512 },
+        "验签密钥。**只呈现这一次**:之后加密存储，任何接口都读不出原文",
+    )),
+    Idempotency::NotIdempotent {
+        reason: "换两次就该是两把新密钥；返回首次结果等于让上一把看起来还活着",
+    },
+    kinds::REPO_WEBHOOK_SET,
+    |repos: &Arc<Repos>, context: &CallContext<'_>| {
+        let project = require_project(context)?;
+        repos.set_webhook_secret(
+            context.identity.user.id,
+            project,
+            &Secret::new(context.text("secret")?),
+        )?;
+        Ok(json!({"configured": true}))
+    }
+);
+
 /// 查状态。**成员就能查**，所以它不走上面那个宏（那个宏要的是维护者）。
 pub struct RepoStatus {
     spec: ToolSpec,
@@ -166,6 +190,9 @@ impl Tool for RepoStatus {
             "boundAt": binding.bound_at.as_millis(),
             "lastFetchAt": binding.last_fetch_at.map(Timestamp::as_millis),
             "lastRevision": binding.last_revision,
+            // 设没设 webhook 密钥要看得见 —— **没设就是这个项目收不到 webhook**，
+            // 而那件事本身是静默的（端点一律回"不存在"）。这里只说有没有，不说是什么。
+            "webhookConfigured": binding.webhook_secret.is_some(),
             // ⚠️ 这里**没有** credential 字段，也不会有：RPO-003 说任何接口都读不出原文，
             // 包括项目所有者自己。
         }))
@@ -180,6 +207,7 @@ pub fn register(registry: &mut Registry, repos: &Arc<Repos>) -> Result<()> {
     registry.register(Arc::new(BindRepo::new(Arc::clone(repos))?))?;
     registry.register(Arc::new(RotateCredential::new(Arc::clone(repos))?))?;
     registry.register(Arc::new(UnbindRepo::new(Arc::clone(repos))?))?;
+    registry.register(Arc::new(SetWebhookSecret::new(Arc::clone(repos))?))?;
     registry.register(Arc::new(RepoStatus::new(Arc::clone(repos))?))?;
     Ok(())
 }

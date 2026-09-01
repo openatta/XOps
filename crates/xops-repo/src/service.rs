@@ -21,6 +21,7 @@ pub mod kinds {
     pub const REPO_BOUND: &str = "repo.bound";
     pub const REPO_ROTATED: &str = "repo.rotated";
     pub const REPO_UNBOUND: &str = "repo.unbound";
+    pub const REPO_WEBHOOK_SET: &str = "repo.webhook-secret-set";
     /// `RPO-006`：**每次使用凭据访问仓库都留一条。**
     pub const REPO_FETCHED: &str = "repo.fetched";
 }
@@ -166,6 +167,61 @@ impl Repos {
         binding.xforge = Some(registration);
         self.persist(&binding, kinds::REPO_BOUND, WriteOp::Update, actor)?;
         Ok(binding)
+    }
+
+    /// 设这个项目的 Git webhook 验签密钥（`TRG-012`）。设过再设就是换一把。
+    ///
+    /// # Errors
+    /// 没权限 · 这个项目还没绑仓（**明确失败，绝不静默创建**）。
+    pub fn set_webhook_secret(
+        &self,
+        actor: UserId,
+        project: ProjectId,
+        secret: &Secret,
+    ) -> Result<Binding> {
+        self.directory
+            .authorize(actor, project, Action::BindRepository)?;
+        let mut binding = self
+            .binding(project)?
+            .ok_or_else(|| Error::not_found("这个项目还没绑仓"))?;
+        binding.webhook_secret = Some(self.sealer.seal(secret)?);
+        self.persist(&binding, kinds::REPO_WEBHOOK_SET, WriteOp::Update, actor)?;
+        Ok(binding)
+    }
+
+    /// 这次投递是**哪个项目**的:逐个绑定试验签，签得过的那一个就是。
+    ///
+    /// ⚠️ **先验签再认项目，而不是先按仓名找项目再验签**（`TRG-012`）。
+    /// 按仓名找会开一条探测信道:同一个仓名，绑过的与没绑过的走的分支不一样。
+    /// 这里两种情形都是"从头试到尾、一个都没过"。
+    ///
+    /// ⚠️ 而且**一次投递最多命中一个项目**。原先那版拿一把平台级密钥验完签，
+    /// 就把事件发给**所有**绑过仓的项目——A 仓的一次 push 会触发 B 项目的任务。
+    ///
+    /// # Errors
+    /// 底层不可用。**没验过不是错误**，是 `Ok(None)`——调用方对两者的回应必须一样。
+    pub fn webhook_source(&self, body: &[u8], signature: &str) -> Result<Option<Binding>> {
+        let mut matched = None;
+        for binding in self.all()? {
+            let Some(sealed) = &binding.webhook_secret else {
+                continue;
+            };
+            let Ok(secret) = self.sealer.open(sealed) else {
+                // 解不开的密文不该让整轮投递失败:换过密钥的部署里，
+                // 别的项目的密钥还是好的。
+                continue;
+            };
+            // ⚠️ **命中之后不 break。** 提前退出会让"验了几次"取决于命中的是第几个，
+            // 而那是可以从耗时上读出来的。整轮做完，命中的取第一个。
+            if self
+                .platform
+                .verify_webhook(secret.expose(), body, signature)
+                && matched.is_none()
+            {
+                matched = Some(binding);
+            }
+        }
+        Ok(matched)
     }
 
     /// 解绑。**已备好的工作区按各自生命周期结束**——它们的析构会收拾自己。

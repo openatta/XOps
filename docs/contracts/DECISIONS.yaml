@@ -25,6 +25,21 @@ entries:
     decidedBy: xbitsmaster
     decidedAt: 2026-09-01T00:00:00Z
 
+  - id: cbc-platform-webhook-secret
+    question: >-
+      Git webhook 的验签密钥从平台级一把（XOPS_WEBHOOK_SECRET）改为按项目一把
+      （存在仓绑定上，经 repo.webhook-secret 设）。要不要留一个过渡期——
+      两把都认，平台级那把打一条弃用日志，下一个版本再删？
+    decision: >-
+      直接删，不留过渡期。留着它等于留着那条错的路：一个部署只要还设着它，
+      webhook 的作用面就还是全平台，而那正是要修的东西——
+      **一把能给每一个项目投递事件的密钥，守的却是一个无凭据的公网入口**。
+      过渡期在这里不是稳妥，是把风险窗口按发布周期延长。
+      ⚠️ 代价是明确的：设过那个变量的部署升上来之后 webhook 一律回"不存在"，
+      直到每个项目各设一把。**静默地继续按旧口径投递比停掉更糟**，所以选停掉。
+    decidedBy: xbitsmaster
+    decidedAt: 2026-09-01T00:00:00Z
+
 # 填一条长这样（把 entries: [] 换成 entries: 再往下缩进）：
 #
 # entries:

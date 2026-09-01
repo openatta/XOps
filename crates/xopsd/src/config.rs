@@ -23,13 +23,6 @@ pub const MODEL_KEY: &str = "XOPS_MODEL_KEY";
 pub const MODEL: &str = "XOPS_MODEL";
 /// 模型服务地址（兼容 Anthropic Messages 的任何一个）。
 pub const MODEL_BASE_URL: &str = "XOPS_MODEL_BASE_URL";
-/// Git webhook 的验签密钥（`TRG-012`）。
-///
-/// ⚠️ **它现在是平台级的一把，不是每个项目一把。**
-/// 按项目存要在仓绑定上加一列并配一个 tool——那是一次接口变更，还没做。
-/// 在那之前：**不给这个变量就等于 webhook 端点一律回"不存在"**,
-/// 而那正是没接落点时该有的样子（`TRG-012`:端点不能成为探测器）。
-pub const WEBHOOK_SECRET: &str = "XOPS_WEBHOOK_SECRET";
 
 /// 一份启动配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,8 +41,6 @@ pub struct Config {
     pub model_key: Option<String>,
     pub model: String,
     pub model_base_url: Option<String>,
-    /// Git webhook 的验签密钥。**不给就等于 webhook 不通**。
-    pub webhook_secret: Option<String>,
 }
 
 impl Default for Config {
@@ -64,7 +55,6 @@ impl Default for Config {
             model_key: None,
             model: "claude-sonnet-4-6".to_owned(),
             model_base_url: None,
-            webhook_secret: None,
         }
     }
 }
@@ -96,7 +86,6 @@ impl Config {
             model_key: var(MODEL_KEY),
             model: var(MODEL).unwrap_or(default.model),
             model_base_url: var(MODEL_BASE_URL),
-            webhook_secret: var(WEBHOOK_SECRET),
         })
     }
 

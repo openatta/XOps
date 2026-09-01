@@ -514,3 +514,39 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
   等于把"测过了"记在一次不算数的执行上。
 - `NotIdempotent`:**一次测试执行就是一次真的执行**——它烧 token、可能有副作用。
   重复调用应当真的再跑一次。
+
+### Element: api:mcp.tool.flow.define
+- module: xops-flow
+- consumers: [agent]
+- 定义一条流程，或给已有流程发布新版本（`FLW-001`）。
+  **不存在流程设计器界面**——在此之前，能到 `Flows::define` 的**只有模板实例化那一条路**。
+- ⚠️ **不接受"一整份 JSON 定义"**（`MCP-004`）:逐字段声明，未声明的键被拒。
+  流程定义里最怕被静默丢掉的是 `separationOfDuties`——
+  **少了它没有任何症状，只是审批不再需要第二个人**。
+- 带标签的 union 在参数里拍平:筛选是 `op` + 可选 `value`，**与 `board.define` 同形**。
+  一步是**一组节点**——一个是单节点，多个是并行组；**不另设判别字段**，
+  判别字段与列表长度对不上是这类参数最常见的错。
+- 版本号、创建人、创建时刻、状态**都不从参数来**:让调用方给版本号
+  等于让它决定"这一版排在哪"，那是平台的账。
+- `FLW-008`③ 的互斥校验在这条路上照常生效，findings 原样回给调用方。
+
+### Element: api:mcp.tool.flow.disable
+- module: xops-flow
+- consumers: [agent]
+- 停用一个版本。**不能再发起新实例，在途实例继续执行完**（`FLW-006`）。
+
+### Element: api:mcp.tool.repo.webhook-secret
+- module: xops-repo
+- consumers: [agent]
+- 设这个项目的 Git webhook 验签密钥（`TRG-012`）。**按项目一把，不是平台一把。**
+- ⚠️ **密钥的作用面必须和它守的东西一样大，不能更大。** 一把平台级的密钥意味着
+  任何拿到它的人都能给**每一个**项目投递事件，而 webhook 端点是无凭据的公网入口。
+- **只呈现这一次**:之后加密存储，任何接口都读不出原文（与 `RPO-003` 同口径）。
+- 非幂等:换两次就该是两把新密钥；返回首次结果等于让上一把看起来还活着。
+
+### Element: api:mcp.tool.repo.status
+- module: xops-repo
+- consumers: [agent]
+- 查绑定与同步状态（`RPO-012`）。**响应里没有 credential 字段，也不会有**（`RPO-003`）。
+- `webhookConfigured`:设没设 webhook 密钥要看得见——**没设就是这个项目
+  收不到 webhook**，而那件事本身是静默的（端点一律回"不存在"）。只说有没有，不说是什么。

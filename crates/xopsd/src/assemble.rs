@@ -76,9 +76,6 @@ struct GitWebhooks {
     repos: Arc<Repos>,
     tasks: Arc<xops_task::Tasks>,
     dispatcher: Arc<Dispatcher>,
-    /// ⚠️ **平台级一把，不是每个项目一把。** 按项目存要在仓绑定上加一列并配一个 tool,
-    /// 那是一次接口变更。**没给就一律回"不存在"**——与没接落点一模一样。
-    secret: Option<String>,
     clock: Arc<dyn Clock>,
 }
 
@@ -98,48 +95,45 @@ impl xops_web::WebhookSink for GitWebhooks {
         let git =
             xops_dispatch::webhook::extract(&payload, delivery, event).map_err(|_| reject())?;
 
-        // 哪个项目 —— 按仓绑定找。**找不到与验签失败回同一个东西。**
-        // 验签在最前面。**签名不对就到此为止**，连"这个项目在不在"都不去问——
-        // 那正是 `TRG-012` 说的"不泄露任何关于任务或项目是否存在的信息"。
-        let secret = self.secret.as_deref().ok_or_else(reject)?;
-        if !xops_repo::GitPlatform::verify_webhook(
-            &xops_repo::GitHub,
-            secret,
-            body,
-            signature.unwrap_or_default(),
-        ) {
+        // ⚠️ **验签这一步同时回答了"哪个项目"。**
+        // 密钥按项目存（`TRG-012`），所以签得过的那一把密钥就指出了项目——
+        // 不需要先按仓名去找项目，而"先找再验"会开一条探测信道：
+        // 同一个仓名，绑过的与没绑过的走的分支不一样。
+        //
+        // ⚠️ **一次投递最多命中一个项目。** 平台级一把密钥的那版是发给所有绑过仓的
+        // 项目的——A 仓的一次 push 会触发 B 项目的任务。
+        let Some(binding) = self
+            .repos
+            .webhook_source(body, signature.unwrap_or_default())
+            .map_err(|_| reject())?
+        else {
             return Err(reject());
-        }
+        };
 
-        let mut delivered = false;
-        for binding in self.repos.all().map_err(|_| reject())? {
-            let subscribers = self
-                .tasks
-                .subscribers(binding.project, "git")
-                .map_err(|_| reject())?;
-            for task in subscribers {
-                let event = xops_dispatch::Event {
-                    kind: xops_dispatch::EventKind::Git,
-                    project: binding.project,
-                    // `TRG-013`：**按投递标识幂等**——平台超时重投不该跑第二遍。
-                    external_id: Some(git.delivery.clone()),
-                    triggered_by: xops_dispatch::Trigger::External {
-                        source: "git".to_owned(),
-                    },
-                    // `TRG-017`：**这次要它看的那一版**，覆盖任务里写死的。
-                    revision: Some(git.revision.clone()),
-                    at: self.clock.now(),
-                    payload: serde_json::json!({
-                        "branch": git.branch, "event": git.event,
-                    }),
-                };
-                let _ = self.dispatcher.trigger(&task, &event);
-            }
-            delivered = true;
+        let subscribers = self
+            .tasks
+            .subscribers(binding.project, "git")
+            .map_err(|_| reject())?;
+        for task in subscribers {
+            let event = xops_dispatch::Event {
+                kind: xops_dispatch::EventKind::Git,
+                project: binding.project,
+                // `TRG-013`：**按投递标识幂等**——平台超时重投不该跑第二遍。
+                external_id: Some(git.delivery.clone()),
+                triggered_by: xops_dispatch::Trigger::External {
+                    source: "git".to_owned(),
+                },
+                // `TRG-017`：**这次要它看的那一版**，覆盖任务里写死的。
+                revision: Some(git.revision.clone()),
+                at: self.clock.now(),
+                payload: serde_json::json!({
+                    "branch": git.branch, "event": git.event,
+                }),
+            };
+            let _ = self.dispatcher.trigger(&task, &event);
         }
         // ⚠️ **没有订阅者也算收下了。** 回"不存在"会让调用方能探出
         // "这个仓有没有被订阅"——那是 `TRG-012` 要挡的同一件事。
-        let _ = delivered;
         Ok(())
     }
 }
@@ -685,7 +679,6 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
                 repos: Arc::clone(&repos),
                 tasks: Arc::clone(&tasks),
                 dispatcher: Arc::clone(&dispatcher),
-                secret: config.webhook_secret.clone(),
                 clock: Arc::clone(&clock),
             }),
         ),

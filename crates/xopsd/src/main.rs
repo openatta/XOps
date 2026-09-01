@@ -60,8 +60,11 @@ fn help() -> &'static str {
        XOPS_MODEL_KEY         模型 API key。**不给就跑桩引擎**\n  \
        XOPS_MODEL             默认模型，默认 claude-sonnet-4-6\n  \
        XOPS_MODEL_BASE_URL    模型服务地址（兼容 Anthropic Messages 的任何一个）\n  \
-       XOPS_LOG               off / error / warn / info / debug，默认 info\n  \
-       XOPS_WEBHOOK_SECRET    Git webhook 的验签密钥。**不给就等于 webhook 不通**\n"
+       XOPS_LOG               off / error / warn / info / debug，默认 info\n\
+     \n\
+     Git webhook 的验签密钥**不在这里**：它按项目存，经 `repo.webhook-secret` 设。\n\
+     一把平台级的密钥能给每一个项目投递事件，而端点是无凭据的公网入口——\n\
+     密钥的作用面不能比它守的东西大。\n"
 }
 
 /// 给一个账号签一把 MCP 令牌。**第一把令牌只能这样来。**

@@ -1,0 +1,16 @@
+[package]
+name = "xops-audit"
+description = "追加式审计：事件类型目录 · 信封 · 多维查询 · 重建 · 保留期。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

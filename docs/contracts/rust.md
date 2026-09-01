@@ -173,3 +173,133 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-store
 - consumers: [xops-store, 需要造崩溃现场的测试]
 - 键编码：全部键都是 `表名 \0 <剩下的>`；事件序号**大端**，因为存储只承诺按字节序扫描。
+
+### Element: rust:xops-audit#AuditEnvelope
+- module: xops-audit
+- consumers: [xops-identity, 之后每个要留痕的包]
+- 一次写的 payload 信封：事件类型 · 所属项目 · 目标 · 主体 · 成败 · 结构化载荷（`AUD-002`）。
+- ⚠️ **凡是要留痕的写，payload 一律是一个信封，对象本身装在 `data` 里。**
+  这不是约定俗成，是 `AUD-005` 的实现方式：审计事件与业务写是**同一条事件**，
+  所以"业务成功但没留痕"在结构上不可能——跨表写没有原子性（`CON-007`），
+  任何"先写业务再写审计"的实现都做不到这一条。
+
+### Element: rust:xops-audit#EventKind
+- module: xops-audit
+- consumers: [全部]
+- `<域>.<动作>`，校验形状。`AUD-009` 的"统一目录与扩展方式"= `kinds::ALL` 常量清单 + 这个校验。
+- **后面每个包往 `kinds` 里加自己的常量，不要在调用处写裸字符串**——那是唯一一处能回答
+  "系统里到底有哪些事件类型"的地方。
+
+### Element: rust:xops-audit#AuditLog
+- module: xops-audit
+- consumers: [xops-identity, RP-03 起各包]
+- 追加没有业务行的留痕（`append`）· 维护索引（`index`）· 查（`query` / `history`）·
+  重建索引（`rebuild_index`）· 到期清理（`prune`）。
+- ⚠️ **`prune` 只吃 `_audit` 表上的记录。** 有业务行的那些事件**是业务状态本身**
+  （项目、成员、令牌都由事件流重建），删了它们 `AUD-004` 当场落空。
+  这是 `AUD-010` 与 `RET-001` 分得开的地方。
+- 只建一个索引（项目 + 时间）。理由不是省事：`AUD-003` 是**可见性**要求，
+  它必须在扫描之前成立，而不是查完再筛。
+
+### Element: rust:xops-audit#Query
+- module: xops-audit
+- consumers: [RP-03 起各包]
+- `AUD-008` 的五个维度。`viewer` 不是可选过滤器，**是可见性判定的入口**：
+  平台级事件只有主体本人读得到。
+
+### Element: rust:xops-audit#AuditRecord
+- module: xops-audit
+- consumers: [RP-03 起各包]
+
+### Element: rust:xops-identity#UserId
+- module: xops-identity
+- consumers: [全部]
+- 稳定、创建后不可变（`IDN-005`）。显示名与邮箱可变，**不得作为关联键使用**。
+
+### Element: rust:xops-identity#User
+- module: xops-identity
+- consumers: [全部]
+- `IDN-004`：顶层主体，彼此地位平等，没有上下级、没有分组。
+- `IDN-006`：带来源提供方与外部账号，让"XOps 里的这个人"与"代码仓里提交的那个人"对得上。
+
+### Element: rust:xops-identity#IdentityProvider
+- module: xops-identity
+- consumers: [RP-05 的 OAuth 回调]
+- `IDN-001`：**全部登录经这一个接口**——新增提供方只实现它，不改用户模型、令牌模型与权限判定。
+- `BuiltinProvider`（预置账号）与 `OAuthProvider`（GitHub 先做）是它的两个实现。
+- ⚠️ **这里没有 HTTP。** 授权码换资料是两次出网调用，属于持有回调端点的那个包（RP-05）；
+  本 crate 只定义注入位 `ProfileExchange`。`IDN-007`：回调只能做一件事。
+
+### Element: rust:xops-identity#TokenSecret
+- module: xops-identity
+- consumers: [RP-03]
+- 令牌原文。**只在签发那一刻存在一次**（`TOK-002`、`I-A`）。
+- 没有 `Clone`、`Debug` 不打印内容、不实现 `Serialize`——想把它存下来的每条路
+  都得先绕过这个类型，而那种绕法在评审里看得见。
+
+### Element: rust:xops-identity#Token
+- module: xops-identity
+- consumers: [RP-03]
+- 存下来的那一份：**只有 SHA-256 摘要，没有原文**。撤销与过期**行为完全一致**（`TOK-004`）。
+- `last_used_at` 按分钟节流（`LAST_USED_RESOLUTION_MILLIS`）：认证在每次调用的路径上，
+  每次都写会让 `_tokens` 这一张表把全系统的调用串行掉（`CON-001` 是表级锁）。
+  **精度是刻意的，不是偷懒。**
+
+### Element: rust:xops-identity#Action
+- module: xops-identity
+- consumers: [RP-03 起各包]
+- 平台里所有要判权的动作，穷举一个 enum。`Action::floor()` 是**"哪个角色能做什么"唯一的一份表**
+  （`PRJ-004`）——别处再写一个 `match`，三个角色变四个的那天就会漏掉一处。
+
+### Element: rust:xops-identity#can
+- module: xops-identity
+- consumers: [RP-03 起各包]
+- `PRJ-010`：**确定性纯函数**，`(角色, 动作)` 之外不看任何东西，不读库、不问模型、不看时间（G8）。
+- `can_in` 多带一个"项目归没归档"：归档后**任何写动作一律不行，哪怕来的是所有者**（`PRJ-009`）。
+
+### Element: rust:xops-identity#ProjectId
+- module: xops-identity
+- consumers: [全部]
+
+### Element: rust:xops-identity#Slug
+- module: xops-identity
+- consumers: [RP-18 模板]
+- `PRJ-003`：全平台唯一、创建后不可变、字符集窄到能被人抄进 issue 标题里（`TPL-005` 要用它组合标识）。
+
+### Element: rust:xops-identity#Project
+- module: xops-identity
+- consumers: [全部]
+
+### Element: rust:xops-identity#Member
+- module: xops-identity
+- consumers: [全部]
+- `PRJ-007`：成员关系是 `(项目, 用户)` 的一条记录，**不是用户身上的一个属性**——
+  没有跨项目全局角色，没有组织级继承（G4）。
+
+### Element: rust:xops-identity#owners_after
+- module: xops-identity
+- consumers: [xops-identity]
+- `PRJ-006` 的纯函数形态："这次改动之后还剩几个所有者"。单独拎出来，是因为它要在
+  写入区间里被调用，而区间里不该有别的逻辑。
+
+### Element: rust:xops-identity#Directory
+- module: xops-identity
+- consumers: [RP-03 起各包]
+- 身份、令牌、项目、成员的读写面，以及它们与审计的接缝。
+- **`resolve(secret)` 是全系统唯一的身份来源**（`TOK-007`、G5）。四种解析失败给的是
+  逐字一致的一句话（`TOK-005`）。
+- **`authorize` 是所有写操作前的那一道**：项目不存在 / 不是成员 / 角色不够 / 项目已归档，
+  **四种情形返回同一个错误**（`PRJ-008` + `MCP-008`）——否则错误码本身就是探测他人项目的工具。
+- `rebuild_at(t)` 仅凭事件流重建那一刻的状态，**不读任何当前视图**（`AUD-004`）。
+
+### Element: rust:xops-identity#Identity
+- module: xops-identity
+- consumers: [RP-03]
+- 解析出来的调用者。`actor()` 是写入时署的名——`I-B`：**它来自这里，不来自请求体。**
+
+### Element: rust:xops-identity#PLATFORM_TABLES
+- module: xops-identity
+- consumers: [RP-04, RP-05]
+- 四张平台表：`_users` · `_tokens` · `_projects` · `_members`。
+- ⚠️ **它们不是「五张系统表」**（`_runs` 那五张是业务上看得见的）。平台表是平台自己的账，
+  **不参与建表、看板与表专属 tool 的派发**——RP-04 要把它们排除在外。

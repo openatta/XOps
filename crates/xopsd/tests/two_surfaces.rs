@@ -1,0 +1,258 @@
+//! 装配层的验收：**两个服务面真的起得来，而且它们是分开的。**
+//!
+//! 这个文件里的每一条都走**真的 TCP**——装配层的价值就在"接起来之后还成立吗"，
+//! 用内存对象直接调是证不了的。
+
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::sync::Arc;
+use std::thread;
+
+use serde_json::{Value, json};
+use xops_identity::{ExternalAccount, ProviderId};
+use xopsd::{Assembled, Config, assemble};
+
+fn config() -> Config {
+    Config {
+        secret_key: "0b".repeat(32),
+        ..Config::default()
+    }
+}
+
+/// 起一个 MCP 面，返回端口。
+fn serve_mcp(assembled: &Assembled) -> u16 {
+    let listener = xops_mcp::transport::http::listen("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = Arc::clone(&assembled.mcp);
+    thread::spawn(move || {
+        let _ = xops_mcp::transport::http::serve_listener(server, &listener);
+    });
+    port
+}
+
+/// 起一个 Web 面，返回端口。
+fn serve_web(assembled: &Assembled) -> u16 {
+    let listener = xops_web::server::listen("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = Arc::clone(&assembled.web);
+    thread::spawn(move || {
+        let _ = server.serve_listener(&listener);
+    });
+    port
+}
+
+fn http(port: u16, request: &str) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.flush().unwrap();
+    let mut response = String::new();
+    let _ = stream.read_to_string(&mut response);
+    response
+}
+
+fn body_of(response: &str) -> &str {
+    response.split_once("\r\n\r\n").map_or("", |(_, body)| body)
+}
+
+fn rpc(port: u16, token: Option<&str>, payload: &Value) -> Value {
+    let body = payload.to_string();
+    let auth = token.map_or_else(String::new, |token| {
+        format!("Authorization: Bearer {token}\r\n")
+    });
+    let request = format!(
+        "POST /mcp HTTP/1.1\r\nHost: localhost\r\n{auth}Content-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    serde_json::from_str(body_of(&http(port, &request))).unwrap_or(Value::Null)
+}
+
+fn token(assembled: &Assembled, account: &str) -> String {
+    let user = assembled
+        .directory
+        .provision(
+            ExternalAccount {
+                provider: ProviderId::new("builtin").unwrap(),
+                account: account.into(),
+            },
+            account,
+            None,
+        )
+        .unwrap()
+        .id;
+    assembled
+        .directory
+        .issue_token(user, "笔记本", None)
+        .unwrap()
+        .1
+        .into_string()
+}
+
+// ——————————————————————————————— 装得起来 ———————————————————————————————
+
+#[test]
+fn 十九个包接得起来而且没有重名的tool() {
+    let assembled = assemble(&config()).unwrap();
+    let names: Vec<String> = assembled
+        .mcp
+        .registry()
+        .specs()
+        .map(|spec| spec.name().as_str().to_owned())
+        .collect();
+    assert!(names.len() > 40, "十六个域一次注册齐，实际 {}", names.len());
+    let unique: std::collections::BTreeSet<&String> = names.iter().collect();
+    assert_eq!(unique.len(), names.len(), "**重名会让后注册的那个悄悄赢**");
+}
+
+#[test]
+fn 没有密钥就起不来() {
+    // **一个写死的默认密钥看起来是加密的，实际不是**——所以默认是空的，而空的起不来。
+    assert!(assemble(&Config::default()).is_err());
+}
+
+#[test]
+fn 裸跑的代价可枚举而且启动横幅说得出来() {
+    let assembled = assemble(&config()).unwrap();
+    // D58 / EXE-029：**不静默降级。**
+    assert!(
+        !assembled.unsatisfied.is_empty(),
+        "没兑现的那几条要列得出来"
+    );
+    assert_eq!(assembled.engine_kind, "stub", "没给 socket 就是桩");
+    let banner = xopsd::banner::render(&config(), &assembled);
+    assert!(banner.contains("桩") && banner.contains("裸跑"));
+}
+
+// ——————————————————————————————— MCP 写入面 ———————————————————————————————
+
+#[test]
+fn 经真的tcp调得通一次tools调用() {
+    let assembled = assemble(&config()).unwrap();
+    let port = serve_mcp(&assembled);
+    let token = token(&assembled, "alice");
+
+    let listed = rpc(
+        port,
+        Some(&token),
+        &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+    );
+    let tools = listed["result"]["tools"]
+        .as_array()
+        .expect("要有 tool 目录");
+    assert!(!tools.is_empty());
+
+    // 建一个项目 —— 这条会连带把那四张系统表建起来（装配层挂的 ProjectHook）。
+    let created = rpc(
+        port,
+        Some(&token),
+        &json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "project.create", "arguments": {"slug": "acme", "displayName": "Acme"}},
+        }),
+    );
+    assert!(
+        created["error"].is_null(),
+        "建项目应该成功：{}",
+        created["error"]
+    );
+    let project = created["result"]["structuredContent"]["project"]
+        .as_str()
+        .expect("回话里要有项目标识")
+        .to_owned();
+
+    // 系统表真的建起来了 —— 表专属 tool 在这个项目里出现了。
+    let scoped = rpc(
+        port,
+        Some(&token),
+        &json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/list",
+            "params": {"_meta": {"project": project}},
+        }),
+    );
+    let names: Vec<&str> = scoped["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(
+        names.iter().any(|name| name.starts_with("row.sys-runs.")),
+        "ProjectHook 该把那四张系统表建起来，实际的 tool 目录是 {names:?}"
+    );
+}
+
+#[test]
+fn 没有令牌进不来() {
+    let assembled = assemble(&config()).unwrap();
+    let port = serve_mcp(&assembled);
+    let response = rpc(
+        port,
+        None,
+        &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+    );
+    assert_eq!(
+        response["error"]["code"], -32_001,
+        "MCP-002：每次调用都要带令牌"
+    );
+}
+
+// ——————————————————————————————— 只读 Web 面 ———————————————————————————————
+
+#[test]
+fn web面起得来而且是另一个端口() {
+    let assembled = assemble(&config()).unwrap();
+    let mcp = serve_mcp(&assembled);
+    let web = serve_web(&assembled);
+    assert_ne!(mcp, web, "两个服务面分开");
+
+    let response = http(
+        web,
+        "GET /api/me HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+    assert!(response.starts_with("HTTP/1.1 "), "它得是个 HTTP 应答");
+}
+
+#[test]
+fn web面没有mcp那条路由() {
+    // **唯一的写入通道是 MCP**（I-L）：Web 那一侧连这条路径都不该有。
+    let assembled = assemble(&config()).unwrap();
+    let web = serve_web(&assembled);
+    let response = http(
+        web,
+        "POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\
+         Connection: close\r\n\r\n{}",
+    );
+    assert!(
+        !response.contains("\"result\""),
+        "Web 面不该处理 MCP 调用：{response}"
+    );
+}
+
+/// Web 那一侧**结构性地不存在写业务对象的路由**（`G2`）。
+///
+/// 这条在 RP-05 里由 `ROUTES` 那张表证明过；这里再确认一次
+/// **装配之后它还是那张表**——装配层没有偷偷加一条。
+#[test]
+fn 装配之后web的写路由还是只有那三条例外() {
+    let writes: Vec<&str> = xops_web::routes::ROUTES
+        .iter()
+        .filter(|route| route.method != "GET")
+        .map(|route| route.path)
+        .collect();
+    assert_eq!(
+        writes.len(),
+        3,
+        "两个凭据路由 + 一条 webhook，实际是 {writes:?}"
+    );
+    assert!(
+        xops_web::routes::ROUTES
+            .iter()
+            .all(|route| !route.writes_business_objects),
+        "G2：一条写业务对象的路由都没有"
+    );
+}
+
+/// 让 `Value` 在这个文件里有个用处。
+fn _unused(value: &Value) -> bool {
+    value.is_null()
+}

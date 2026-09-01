@@ -1,0 +1,40 @@
+[package]
+name = "xopsd"
+description = "XOps 的可执行入口：把 19 个 crate 装配起来，开 MCP 写入面与只读 Web 面。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "xopsd"
+path = "src/main.rs"
+
+[lib]
+name = "xopsd"
+path = "src/lib.rs"
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+xops-table.workspace = true
+xops-read.workspace = true
+xops-web.workspace = true
+xops-exec.workspace = true
+xops-repo.workspace = true
+xops-skill.workspace = true
+xops-task.workspace = true
+xops-dispatch.workspace = true
+xops-flow.workspace = true
+xops-settle.workspace = true
+xops-script.workspace = true
+xops-notice.workspace = true
+xops-template.workspace = true
+xops-xforge.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

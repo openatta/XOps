@@ -1145,6 +1145,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "xopsd"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "xops-audit",
+ "xops-core",
+ "xops-dispatch",
+ "xops-exec",
+ "xops-flow",
+ "xops-identity",
+ "xops-mcp",
+ "xops-notice",
+ "xops-read",
+ "xops-repo",
+ "xops-script",
+ "xops-settle",
+ "xops-skill",
+ "xops-store",
+ "xops-table",
+ "xops-task",
+ "xops-template",
+ "xops-web",
+ "xops-xforge",
+]
+
+[[package]]
 name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

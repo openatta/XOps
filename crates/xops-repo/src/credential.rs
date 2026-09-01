@@ -80,7 +80,18 @@ impl Sealer {
     pub fn from_env() -> Result<Self> {
         let hex = std::env::var(KEY_ENV)
             .map_err(|_| Error::invalid(format!("没有设 {KEY_ENV}（32 字节十六进制）")))?;
-        Self::from_key(&decode_hex(&hex)?)
+        Self::from_hex(&hex)
+    }
+
+    /// 从十六进制文本取密钥。
+    ///
+    /// 装配层要它：**密钥从哪来是装配的事，不是这个类型的事**——
+    /// 读环境变量那一步在进程边界上做，测试才好构造。
+    ///
+    /// # Errors
+    /// 不是十六进制，或者长度不对。
+    pub fn from_hex(hex: &str) -> Result<Self> {
+        Self::from_key(&decode_hex(hex)?)
     }
 
     /// 生成一把新钥匙的十六进制形态。部署时用它。

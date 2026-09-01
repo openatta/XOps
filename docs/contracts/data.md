@@ -232,3 +232,20 @@ sql:meta.projection.<规则>           事件到当前视图的投影规则
   ——这正是 `Relations::upsert` 分成"用来找的"与"原样带回来的"两个参数的理由。
 - ⚠️ **它是缓存，不是账**：账在 `_flow_instances` 的事件流里，
   `Flows::rebuild_instances` 从账上重放。
+
+### Element: sql:relation.rel_audit
+- module: xops-audit
+- 审计索引的**关系投影**（`D60`），取代早先那条手写的键值二级索引。
+- 列：`row`（事件标识，主键）· `project` · `at` · `kind` · `target` · `subject` ·
+  `actor` · `orderKey` · `payload`。索引在前六列上（`actor` 不建——它只在少数查询里出现）。
+- ⚠️ **`payload` 里只有 `(表, 序号)` 这个指针**：事件流仍然是唯一的一份内容。
+- ⚠️ **`project` 为 NULL 表示平台级事件**，不是某个占位值——`IS NULL` 才查得干净，
+  而 `AUD-003`（平台级事件只有主体本人可读）因此是 `WHERE` 的一部分，
+  不是取回来之后再过滤掉。
+
+### Element: sql:meta.wal
+- module: xops-store
+- 库以 **WAL** 模式打开：**读不挡写、写不挡读**。持久设置，建库时定一次。
+- ⚠️ 它**不在 `CON-012` 的禁用清单里**，也不构成能力依赖：代码语义与它无关，
+  关掉一切照常，只是读重新排在写后面。同 `WITHOUT ROWID` 一类——
+  **是性能选择，不是能力依赖**。换到 MySQL / PostgreSQL 时它根本不需要。

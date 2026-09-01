@@ -28,7 +28,12 @@ fn fixtures() -> Vec<Fixture> {
         let engine = Arc::new(WriteEngine::new(Arc::clone(&store), clock.clone()));
         let relations: Arc<dyn xops_store::Relations> =
             Arc::new(xops_store::MemoryRelations::new());
-        let mut audit = AuditLog::new(Arc::clone(&engine), Arc::clone(&store), Arc::clone(&relations)).unwrap();
+        let mut audit = AuditLog::new(
+            Arc::clone(&engine),
+            Arc::clone(&store),
+            Arc::clone(&relations),
+        )
+        .unwrap();
         for table in xops_identity::directory::platform_tables().unwrap() {
             audit = audit.watching(table);
         }

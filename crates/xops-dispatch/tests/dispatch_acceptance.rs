@@ -53,9 +53,13 @@ fn fixture() -> Fixture {
     let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
     let clock = Arc::new(SystemClock);
     let write = Arc::new(WriteEngine::new(Arc::clone(&store), clock.clone()));
-    let relations: Arc<dyn xops_store::Relations> =
-        Arc::new(xops_store::MemoryRelations::new());
-    let mut audit = AuditLog::new(Arc::clone(&write), Arc::clone(&store), Arc::clone(&relations)).unwrap();
+    let relations: Arc<dyn xops_store::Relations> = Arc::new(xops_store::MemoryRelations::new());
+    let mut audit = AuditLog::new(
+        Arc::clone(&write),
+        Arc::clone(&store),
+        Arc::clone(&relations),
+    )
+    .unwrap();
     for table in xops_identity::directory::platform_tables().unwrap() {
         audit = audit.watching(table);
     }

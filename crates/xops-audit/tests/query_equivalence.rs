@@ -140,8 +140,7 @@ fn 每一种筛选下两条路给同一个答案() {
         // 加上各维度的组合。
         queries.push((
             "项目 + 类型",
-            Query::in_project(alpha, me)
-                .of_kind(EventKind::new(kinds::PROJECT_CREATED).unwrap()),
+            Query::in_project(alpha, me).of_kind(EventKind::new(kinds::PROJECT_CREATED).unwrap()),
         ));
         queries.push((
             "项目 + actor",

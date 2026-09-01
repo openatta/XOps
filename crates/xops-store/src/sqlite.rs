@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -28,14 +29,55 @@ const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS kv (
     PRIMARY KEY (space, key)
 ) WITHOUT ROWID";
 
+/// 默认开几条读连接。
+///
+/// 读连接的作用是**让读不排在写后面**。多到超过并发读的数量就没有意义了——
+/// 每一条都是一个文件句柄和一份页缓存。
+pub const READERS: usize = 4;
+
+/// 等一把被别人占着的库锁最多多久。
+///
+/// ⚠️ **它不是「重试策略」。** SQLite 的写本来就是全库串行的，多开几条写连接
+/// 换不来写并发，只会把等待从进程内的 mutex 挪到 `SQLITE_BUSY`。这个超时是给
+/// **读连接**用的：WAL 下读一般不会被挡，但检查点那一瞬间会。
+const BUSY_TIMEOUT_MILLIS: u64 = 5_000;
+
 /// SQLite 上的存储契约实现。
+///
+/// # 一条写连接，几条读连接
+///
+/// ```text
+/// put / delete   → 写连接（一条）
+/// get / scan     → 读连接（轮着用）
+/// ```
+///
+/// ⚠️ **写连接只有一条不是偷懒，是 SQLite 就这样**：它是单写者模型，
+/// 全库同一时刻只有一个写事务。开 N 条写连接不会变快，只会让第二个写拿到
+/// `SQLITE_BUSY` 然后在超时里空等——**把排队从一个公平的 mutex 换成一场竞争**。
+///
+/// **分开读连接换来的是"读不排在写后面"**。早先只有一条连接，
+/// 一次看板查询和一次执行落账抢的是同一把锁——那才是"一张热表锁住所有人"的真正位置。
+/// （表级写锁从来不是：`TableLocks` 是按表的，`_runs` 的写不挡别的表。）
+///
+/// ⚠️ **要真正的写并发得换库。** 到 MySQL 那天，这里的"一条写连接"要变成一个写连接池，
+/// 而调用方一行不用改——这也是现在就把读写分开的理由之一。
+///
+/// # 内存库只有一条连接
+///
+/// `:memory:` 上**每条连接都是一个各自独立的库**，所以内存库不开读连接，
+/// 读写都走那一条。测试因此与生产走的是同一份代码，只是并发度不同。
 pub struct SqliteStore {
-    connection: Mutex<Connection>,
+    writer: Mutex<Connection>,
+    /// 空表示"读也走写连接"——内存库就是这种。
+    readers: Vec<Mutex<Connection>>,
+    next: AtomicUsize,
 }
 
 impl std::fmt::Debug for SqliteStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SqliteStore").finish_non_exhaustive()
+        f.debug_struct("SqliteStore")
+            .field("readers", &self.readers.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -45,8 +87,34 @@ impl SqliteStore {
     /// # Errors
     /// 打不开或建表失败。
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let connection = Connection::open(path).map_err(sql_error)?;
-        Self::prepare(connection)
+        Self::open_with_readers(path, READERS)
+    }
+
+    /// 同上，但自己定读连接数。`0` 表示读也走写连接。
+    ///
+    /// # Errors
+    /// 打不开或建表失败。
+    pub fn open_with_readers(path: impl AsRef<Path>, readers: usize) -> Result<Self> {
+        let path = path.as_ref();
+        let writer = Self::connect(path)?;
+        writer.execute(SCHEMA, []).map_err(sql_error)?;
+        // WAL：**读不挡写、写不挡读**。它是一个持久设置，建库时定一次。
+        //
+        // ⚠️ 这不是"依赖数据库特有能力"（`CON-012`）：代码的语义与它无关，
+        // 关掉它一切照常工作，只是读会重新排在写后面。同 `WITHOUT ROWID` 一类，
+        // **是性能选择，不是能力依赖**；换到 MySQL / PostgreSQL 时它根本不需要。
+        let _: String = writer
+            .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+            .map_err(sql_error)?;
+        let mut pool = Vec::with_capacity(readers);
+        for _ in 0..readers {
+            pool.push(Mutex::new(Self::connect(path)?));
+        }
+        Ok(Self {
+            writer: Mutex::new(writer),
+            readers: pool,
+            next: AtomicUsize::new(0),
+        })
     }
 
     /// 打开一个进程内的临时库。测试用。
@@ -55,20 +123,39 @@ impl SqliteStore {
     /// 建表失败。
     pub fn in_memory() -> Result<Self> {
         let connection = Connection::open_in_memory().map_err(sql_error)?;
-        Self::prepare(connection)
-    }
-
-    fn prepare(connection: Connection) -> Result<Self> {
         connection.execute(SCHEMA, []).map_err(sql_error)?;
         Ok(Self {
-            connection: Mutex::new(connection),
+            writer: Mutex::new(connection),
+            // **内存库每条连接都是一个独立的库**，所以这里只有一条。
+            readers: Vec::new(),
+            next: AtomicUsize::new(0),
         })
     }
 
+    fn connect(path: &Path) -> Result<Connection> {
+        let connection = Connection::open(path).map_err(sql_error)?;
+        connection
+            .busy_timeout(std::time::Duration::from_millis(BUSY_TIMEOUT_MILLIS))
+            .map_err(sql_error)?;
+        Ok(connection)
+    }
+
+    /// 写连接。**DDL 也走它**——建表建索引是写。
     pub(crate) fn locked(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
-        self.connection
+        self.writer
             .lock()
-            .map_err(|_| Error::internal("SQLite 连接的锁中毒了"))
+            .map_err(|_| Error::internal("SQLite 写连接的锁中毒了"))
+    }
+
+    /// 一条读连接，轮着来。没有读连接时退回写连接。
+    pub(crate) fn reading(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+        if self.readers.is_empty() {
+            return self.locked();
+        }
+        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.readers.len();
+        self.readers[index]
+            .lock()
+            .map_err(|_| Error::internal("SQLite 读连接的锁中毒了"))
     }
 }
 
@@ -78,7 +165,8 @@ fn sql_error(error: rusqlite::Error) -> Error {
 
 impl Store for SqliteStore {
     fn get(&self, space: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.locked()?
+        // 读走读连接 —— **它不排在写后面**。
+        self.reading()?
             .query_row(
                 "SELECT value FROM kv WHERE space = ?1 AND key = ?2",
                 params![space, key],
@@ -118,7 +206,8 @@ impl Store for SqliteStore {
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let lower = after.map_or_else(|| prefix.to_vec(), <[u8]>::to_vec);
         let exclusive = after.is_some();
-        let connection = self.locked()?;
+        // 扫描也是读。**看板那一次查询不该跟一次执行落账抢同一把锁。**
+        let connection = self.reading()?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
 
         let collect = |sql: &str, upper: Option<Vec<u8>>| -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -369,7 +458,7 @@ impl Relations for SqliteRelations {
         let statement =
             format!("SELECT row, payload FROM rel_{relation}{where_clause}{order}{limit}");
 
-        let connection = self.store.locked()?;
+        let connection = self.store.reading()?;
         let mut prepared = connection.prepare(&statement).map_err(sql_error)?;
         let rows = prepared
             .query_map(rusqlite::params_from_iter(bound), |row| {

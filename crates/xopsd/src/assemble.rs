@@ -124,7 +124,11 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
     );
 
     // ③ 审计。**每个包的平台表都要登记**，否则重建索引时走不到它的事件流。
-    let mut audit = AuditLog::new(Arc::clone(&engine), Arc::clone(&store), Arc::clone(&relations))?;
+    let mut audit = AuditLog::new(
+        Arc::clone(&engine),
+        Arc::clone(&store),
+        Arc::clone(&relations),
+    )?;
     for table in watched_tables()? {
         audit = audit.watching(table);
     }

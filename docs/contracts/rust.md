@@ -103,7 +103,18 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 ### Element: rust:xops-store#SqliteStore
 - module: xops-store
 - consumers: [xopsd]
-- 契约的第一个实现。**全仓唯一允许出现 `rusqlite` 的地方**，由 `tests/no_sqlite_outside_store.rs` 枚举全仓来守。
+- **一条写连接 + 几条读连接**，`put`/`delete`/DDL 走写，`get`/`scan` 走读。
+- ⚠️ **写连接只有一条不是偷懒，是 SQLite 就这样**：单写者模型，全库同一时刻
+  只有一个写事务。开 N 条写连接不会变快，只会让第二个写拿到 `SQLITE_BUSY`
+  然后空等——**把排队从一个公平的 mutex 换成一场竞争**。
+- **分开读连接换来的是"读不排在写后面"**。早先只有一条连接，一次看板查询和一次
+  执行落账抢的是同一把锁——**那才是"一张热表锁住所有人"的真正位置**。
+  表级写锁从来不是：`TableLocks` 是按表的，`_runs` 的写不挡别的表。
+- ⚠️ **要真正的写并发得换库。** 到 MySQL 那天，"一条写连接"要变成一个写连接池，
+  而调用方一行不改——这也是现在就把读写分开的理由之一。
+- WAL 是**持久设置，建库时定一次**。它不是"依赖数据库特有能力"（`CON-012`）：
+  代码语义与它无关，关掉一切照常，只是读会重新排在写后面。同 `WITHOUT ROWID` 一类。
+- **内存库只有一条连接**：`:memory:` 上每条连接都是一个各自独立的库。
 
 ### Element: rust:xops-store#TableLocks
 - module: xops-store
@@ -192,14 +203,19 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-audit#AuditLog
 - module: xops-audit
-- consumers: [xops-identity, RP-03 起各包]
-- 追加没有业务行的留痕（`append`）· 维护索引（`index`）· 查（`query` / `history`）·
-  重建索引（`rebuild_index`）· 到期清理（`prune`）。
-- ⚠️ **`prune` 只吃 `_audit` 表上的记录。** 有业务行的那些事件**是业务状态本身**
-  （项目、成员、令牌都由事件流重建），删了它们 `AUD-004` 当场落空。
-  这是 `AUD-010` 与 `RET-001` 分得开的地方。
-- 只建一个索引（项目 + 时间）。理由不是省事：`AUD-003` 是**可见性**要求，
-  它必须在扫描之前成立，而不是查完再筛。
+- consumers: [全部写入方]
+- 追加式审计：信封 · 多维查询 · 重建 · 保留期。
+- **索引从一条手写的键值二级索引换成一张真表**（`D60`）：`project` · `at` ·
+  `kind` · `target` · `subject` · `orderKey` 上有真索引。
+- ⚠️ **手写索引是在重新实现数据库已经做好的事**，而换回来的能力还不如一条真索引：
+  那条索引只能"按 scope 前缀扫、按时间排"，`kind` / `actor` / `target` 的筛选
+  还是得把每条记录从事件流里读出来再比。**现在筛选全在 SQL 里，
+  只有命中的那几条才去事件流取内容。**
+- ⚠️ **索引里存的是指针，不是内容**：载荷只有 `(表, 序号)`。
+  **事件流仍然是唯一的一份内容**——索引不该把被索引的东西再抄一遍。
+- ⚠️ **排序键是单独一列**：`at` 与序号拼成定宽十六进制，字典序即 `(时刻, 序号)` 序。
+  光按 `at` 排，同一毫秒内的先后就交给引擎决定了，**而那在两个实现之间会漂**。
+- 构造函数因此多一个 `Relations`。
 
 ### Element: rust:xops-audit#Query
 - module: xops-audit
@@ -1378,20 +1394,20 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-store#Relation
 - module: xops-store
-- consumers: [RP-17]
+- consumers: [RP-02, RP-14, RP-17]
 - 一张关系投影的声明：名字 + 列（类型、要不要索引）。
-- 名字与列名过一个**白名单形状**——它们进的是 SQL 标识符的位置，那里不能用参数占位。
-  **这不是"清洗输入"，是只认一个形状。**
-- ⚠️ **重名按大小写不敏感判**：目标库是 MySQL，那里的列名不区分大小写。
-  在 SQLite 上 `readAt` 与 `readat` 是两列，换过去就是同一列——
-  **这种差异要在声明这一刻挡住，不要留到迁移那天。**
+- 名字与列名过一个**白名单形状**，另加两条面向 MySQL 的提前防：
+  - **重名按大小写不敏感判**——SQLite 上 `readAt` 与 `readat` 是两列，MySQL 上是同一列。
+  - **SQL 保留字当不了列名**——`table` / `order` / `key` 这些 SQLite 容得下，
+    **MySQL 那边是语法错**。
+  两条都是同一个道理：**挡在声明这一刻，不留到迁移那天。**
 
 ### Element: rust:xops-store#Select
 - module: xops-store
-- consumers: [RP-17]
-- **四个算子**：等值 · 为空 · 非空 · 不大于。
-  **每一个都有一处真实调用把它带出来**，不是先设计一套语言再找用处。
-- 引用了没声明过的列**当场失败**——拼错的列名会表现成"没有数据"，那种失败查起来很慢。
+- consumers: [RP-02, RP-14, RP-17]
+- **五个算子**：等值 · 为空 · 非空 · 不大于 · **不小于**。
+  每一个都有一处真实调用把它带出来——`at_least` 来自审计的时间区间查（`AUD-008`）。
+- 引用了没声明过的列**当场失败**——拼错的列名会表现成"没有数据"。
 
 ### Element: rust:xops-store#SqliteRelations
 - module: xops-store
@@ -1428,3 +1444,15 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-flow
 - consumers: [xopsd]
 - 从账重放实例的关系投影。**漂了不需要修补，清空重放就行。**
+
+### Element: rust:xops-store#SqliteStore::open_with_readers
+- module: xops-store
+- consumers: [xopsd]
+- 自己定读连接数；`0` 表示读也走写连接。
+- 读连接是**性能选择，不是能力依赖**：关掉它语义不变，只是读重新排在写后面。
+
+### Element: rust:xops-audit#AuditRecord::from_event
+- module: xops-audit
+- consumers: [测试]
+- 从一条事件解出一条审计记录。**不是信封就返回 `None`**——
+  同一条事件流上并存着业务行与留痕，解不出来的那些不是错误。

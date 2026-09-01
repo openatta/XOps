@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo", "crates/xops-skill", "crates/xops-task", "crates/xops-dispatch"]
+members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo", "crates/xops-skill", "crates/xops-task", "crates/xops-dispatch", "crates/xops-flow"]
 
 [workspace.package]
 version = "0.1.0"

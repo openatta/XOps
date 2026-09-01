@@ -946,3 +946,67 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   平台的 webhook 都有超时并会因超时重投，从而放大问题。
 - `rejection()` 是验签失败时**唯一**该返回的错误。**端点回的东西必须与"没接落点"
   一模一样**（`TRG-012`）——否则它就成了探测器。有测试逐字节比这两种响应。
+
+### Element: rust:xops-flow#Definition
+- module: xops-flow
+- consumers: [RP-15, RP-18]
+- 一条流程的一个版本。**结算表放"谁对它做了什么表态"，主体表放"这件事本身"**（`FLW-005`）。
+- `activation_sets()` 是 D47 判定的单位：串行节点各自一个集合，**一个并行组整体是一个集合**。
+
+### Element: rust:xops-flow#Criteria
+- module: xops-flow
+- consumers: [RP-15]
+- 一组筛选。`provably_disjoint` 是**保守口径**的落点：
+  目前能证明互斥的只有一种——**同一列被约束成两个不同的字面值**，别的一律证不出来。
+
+### Element: rust:xops-flow#Writers
+- module: xops-flow
+- consumers: [RP-15]
+- 允许写入者是三者的并集（`FLW-018`）：项目角色 · 名单表 · **指定的私有任务**。
+- ⚠️ **名单表的写权限就是审批权的元权限**（`FLW-019`）：谁能改名单，谁就能给自己发审批权。
+- ⚠️ **③ 只能是私有任务**（`FLW-021`）：公共任务没有"所有者这个人"，
+  一旦它写的行被算作节点通过，"每一次通过都归属一个具名的人"当场落空。
+
+### Element: rust:xops-flow#RowQuery
+- module: xops-flow
+- consumers: [RP-15, RP-16]
+- 求值时要预取的一批行。**流转插件读不到表**（`PLG-002`），所以它要用的行必须在
+  流程定义里声明出来。**这不是限制，是把一件本来就该做的事挑明了**——
+  求值发生在写串行区间内，一次自由查询就是一次不确定的写时延。
+
+### Element: rust:xops-flow#validate
+- module: xops-flow
+- consumers: [RP-15, RP-18]
+- **不落库**（`FLW-008`）。一次返回**全部**问题，不是第一个——一次改完比来回三次强。
+- ③ 的判定：**同一集合内两两**（同时激活，一行落进来会被多个节点同时求值）
+  与**相邻两个集合之间**（会在前一个通过的瞬间被同一行结算）。隔了一步的不判。
+- ⚠️ **宁可误拒**：有测试专门构造"看起来不重叠但证不出互斥"的用例，
+  验证它误拒而不是误放——误放的后果是运行时一行同时结算两个节点，而那是事后查不出来的。
+
+### Element: rust:xops-flow#Instance
+- module: xops-flow
+- consumers: [RP-15, RP-17]
+- ⚠️ **没有 `currentNode`**：当前激活的节点可能有多个（并行组），
+  权威是 `active()` 那些行（`TBL-007`）。**"卡在哪"问的就是它。**
+- `reject` / `cancel` / `expire` 都会把剩下的节点转成 **`Void`（已作废）**，
+  **不停在"未激活"**——停在那儿会让人以为它还会被激活。
+
+### Element: rust:xops-flow#NodeState
+- module: xops-flow
+- consumers: [RP-15, RP-17]
+- 五态：未激活 · 激活中 · 已通过 · 已拒绝 · **已作废**。
+
+### Element: rust:xops-flow#Flows
+- module: xops-flow
+- consumers: [RP-15, RP-04, RP-18]
+- 定义 / 校验 / 停用 / 发起 / 推进 / 取消 / 过期 / 查状态 / 跨项目待办。
+- ⚠️ **`advance` 是 RP-15 唯一该用的推进入口**——它**不得自己去改
+  `_flows` / `_flow_nodes`**（这条分工是那一刀能成立的全部前提）。
+- `referencing` 给 RP-04 的删表判定用（`TBL-026`：被引用的表不能删）。
+- `FLW-007`：实例存的是**发起时的版本**，之后发布新版本不影响它。
+
+### Element: rust:xops-flow#NodeActivated
+- module: xops-flow
+- consumers: [RP-11, RP-15]
+- 「节点被激活」的载荷（`TRG-018`）：实例 · 流程与版本 · 哪个节点 · 发起者 ·
+  主体标识与修订。

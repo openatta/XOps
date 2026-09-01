@@ -1,0 +1,21 @@
+[package]
+name = "xops-flow"
+description = "流程定义 · 校验 · 实例与节点状态机。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+xops-table.workspace = true
+xops-task.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

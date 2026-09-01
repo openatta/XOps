@@ -611,6 +611,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "xops-flow"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xops-audit",
+ "xops-core",
+ "xops-identity",
+ "xops-mcp",
+ "xops-store",
+ "xops-table",
+ "xops-task",
+]
+
+[[package]]
 name = "xops-identity"
 version = "0.1.0"
 dependencies = [

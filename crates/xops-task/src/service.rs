@@ -9,7 +9,7 @@ use xops_audit::{AuditEnvelope, AuditLog};
 use xops_core::{Actor, Clock, Error, Result, RowId, TableName, WriteOp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
 use xops_skill::{Ownership, Skills, State};
-use xops_store::{Row, Store, WriteEngine, WriteRequest, keys, space};
+use xops_store::{Store, WriteEngine, WriteRequest};
 
 use crate::policy::{OnComplete, VersionPolicy};
 use crate::task::{Task, TaskId};
@@ -325,33 +325,7 @@ impl Tasks {
     }
 
     fn all(&self) -> Result<Vec<Task>> {
-        let table = TableName::new(TASKS_TABLE)?;
-        let prefix = keys::table_prefix(&table);
-        let mut out = Vec::new();
-        let mut cursor: Option<Vec<u8>> = None;
-        loop {
-            let page = self
-                .store
-                .scan(space::ROW, &prefix, cursor.as_deref(), 256)?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|(key, _)| key.clone());
-            for (_, bytes) in page {
-                let row: Row = serde_json::from_slice(&bytes)
-                    .map_err(|error| Error::internal(format!("投影读不回来：{error}")))?;
-                if row.is_deleted() {
-                    continue;
-                }
-                let Some(envelope) = AuditEnvelope::from_payload(&row.payload) else {
-                    continue;
-                };
-                if let Ok(task) = serde_json::from_value::<Task>(envelope.data) {
-                    out.push(task);
-                }
-            }
-        }
-        Ok(out)
+        xops_audit::projection::all(self.store.as_ref(), TASKS_TABLE)
     }
 
     fn put(&self, task: &Task, kind: &str, op: WriteOp, actor: UserId) -> Result<()> {

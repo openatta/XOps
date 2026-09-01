@@ -33,7 +33,7 @@ use xops_read::ReadModel;
 use xops_repo::{Repos, Sealer};
 use xops_script::Plugins;
 use xops_skill::Skills;
-use xops_store::{MemoryStore, SqliteStore, Store, WriteEngine};
+use xops_store::{MemoryRelations, MemoryStore, Relations, SqliteStore, Store, WriteEngine};
 use xops_table::Tables;
 use xops_table::engine::Catalog;
 use xops_template::Templates;
@@ -100,10 +100,19 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
     // ① 存储。**换一个实现进去，上面的一切不改一行**（`CON-012`、`G12`）。
-    let store: Arc<dyn Store> = if config.in_memory() {
-        Arc::new(MemoryStore::new())
+    //
+    // 两条缝一起建：[`Store`] 管事件与键值投影，[`Relations`] 管**带索引的当前视图**。
+    // 后者是缓存不是账——需要按别的列找的表独立成一张真表,索引交给数据库,
+    // **而不是在键值里手写一条二级索引**。
+    let (store, relations): (Arc<dyn Store>, Arc<dyn Relations>) = if config.in_memory() {
+        (
+            Arc::new(MemoryStore::new()),
+            Arc::new(MemoryRelations::new()),
+        )
     } else {
-        Arc::new(SqliteStore::open(&config.db)?)
+        let sqlite = Arc::new(SqliteStore::open(&config.db)?);
+        let relations = sqlite.relations();
+        (sqlite as Arc<dyn Store>, relations)
     };
 
     // ② 写入路径：目录 + 写引擎 + 四道钩子里的前两道。
@@ -230,9 +239,10 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
 
     let notices = Arc::new(Notices::new(
         Arc::clone(&tables),
+        Arc::clone(&relations),
         Arc::clone(&directory),
         Arc::clone(&clock),
-    ));
+    )?);
     let templates = Arc::new(Templates::new(
         Arc::clone(&tables),
         Arc::clone(&flows),

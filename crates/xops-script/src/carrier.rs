@@ -50,13 +50,13 @@ pub trait Host: Send + Sync + 'static {
     /// 底层不可用。
     fn config(&self) -> Result<BTreeMap<String, String>>;
 
-    /// 读一张表（`PLG-012` ③）。
+    /// 读一张表的一页（`PLG-012` ③）。**按写入序,最老的在前。**
     ///
-    /// ⚠️ **给的是最老的 `limit` 行**（按写入序），不是最新的。
+    /// `after` 是游标：把上一页回话里的 `next` 传回来就是下一页。
     ///
     /// # Errors
     /// 表不存在或底层不可用。**"不许读"不从这里出去**——那种表压根不在绑定的可达范围里。
-    fn read_table(&self, table: &str, limit: usize) -> Result<Value>;
+    fn read_table(&self, table: &str, limit: usize, after: Option<&str>) -> Result<Value>;
 
     /// 出网后端。
     fn net(&self) -> &dyn Net;
@@ -240,25 +240,28 @@ fn bind(context: &rquickjs::Context, grant: &Grant) -> Result<String> {
                 let allowed = capabilities.clone();
                 globals.set(
                     "__xops_read_table",
-                    rquickjs::function::Func::from(move |name: String, limit: i64| {
-                        // 声明之外的表**不在这个绑定够得到的范围里**。
-                        let known = allowed
-                            .tables
-                            .iter()
-                            .any(|table| table.as_str() == name.as_str());
-                        if !known {
-                            return failed(&format!(
-                                "{name} 不在这个插件声明过的表里——它没有这条路"
-                            ));
-                        }
-                        let limit = usize::try_from(limit.max(0))
-                            .unwrap_or(READ_TABLE_LIMIT)
-                            .clamp(1, READ_TABLE_LIMIT);
-                        match host.read_table(&name, limit) {
-                            Ok(rows) => ok(&rows),
-                            Err(error) => failed(&format!("{error}")),
-                        }
-                    }),
+                    rquickjs::function::Func::from(
+                        move |name: String, limit: i64, after: String| {
+                            // 声明之外的表**不在这个绑定够得到的范围里**。
+                            let known = allowed
+                                .tables
+                                .iter()
+                                .any(|table| table.as_str() == name.as_str());
+                            if !known {
+                                return failed(&format!(
+                                    "{name} 不在这个插件声明过的表里——它没有这条路"
+                                ));
+                            }
+                            let limit = usize::try_from(limit.max(0))
+                                .unwrap_or(READ_TABLE_LIMIT)
+                                .clamp(1, READ_TABLE_LIMIT);
+                            let after = (!after.is_empty()).then_some(after);
+                            match host.read_table(&name, limit, after.as_deref()) {
+                                Ok(rows) => ok(&rows),
+                                Err(error) => failed(&format!("{error}")),
+                            }
+                        },
+                    ),
                 )?;
             }
             if !capabilities.network.is_empty() {
@@ -293,8 +296,9 @@ fn bind(context: &rquickjs::Context, grant: &Grant) -> Result<String> {
     }
     if !grant.capabilities.tables.is_empty() {
         granted.push(
-            "readTable: function (name, limit) { \
-             return __xops_unwrap(__xops_read_table(String(name), limit || 100)); }",
+            "readTable: function (name, limit, after) { \
+             return __xops_unwrap(__xops_read_table(String(name), limit || 100, \
+             after == null ? '' : String(after))); }",
         );
     }
     if !grant.capabilities.network.is_empty() {
@@ -364,8 +368,11 @@ mod tests {
             Ok(BTreeMap::from([("token".to_owned(), "s3cr3t".to_owned())]))
         }
 
-        fn read_table(&self, table: &str, limit: usize) -> Result<Value> {
-            Ok(json!([{"表": table, "上限": limit}]))
+        fn read_table(&self, table: &str, limit: usize, after: Option<&str>) -> Result<Value> {
+            Ok(json!({
+                "rows": [{"表": table, "上限": limit}],
+                "next": after.map(str::to_owned),
+            }))
         }
 
         fn net(&self) -> &dyn Net {
@@ -503,6 +510,26 @@ mod tests {
     }
 
     #[test]
+    fn 读表带得动游标() {
+        let capabilities = Capabilities {
+            tables: vec![TableId::user("bugs").unwrap()],
+            ..Capabilities::none()
+        };
+        // 不给游标：`next` 是 null。
+        let first = granted(
+            "function run() { return xops.readTable('bugs', 10); }",
+            capabilities.clone(),
+        );
+        assert_eq!(first.value().unwrap()["next"], json!(null));
+        // 给了游标：原样传到宿主那一侧。
+        let next = granted(
+            "function run() { return xops.readTable('bugs', 10, 'R1'); }",
+            capabilities,
+        );
+        assert_eq!(next.value().unwrap()["next"], json!("R1"));
+    }
+
+    #[test]
     fn 声明之外的表读不到() {
         let capabilities = Capabilities {
             tables: vec![TableId::user("bugs").unwrap()],
@@ -512,7 +539,7 @@ mod tests {
             "function run() { return xops.readTable('bugs', 10); }",
             capabilities.clone(),
         );
-        assert_eq!(mine.value().unwrap()[0]["表"], json!("bugs"));
+        assert_eq!(mine.value().unwrap()["rows"][0]["表"], json!("bugs"));
         let other = granted(
             "function run() { return xops.readTable('salaries', 10); }",
             capabilities,

@@ -14,7 +14,7 @@ use serde_json::Value;
 use xops_audit::{AuditEnvelope, AuditLog};
 use xops_core::{Actor, Clock, Error, Id, Result, Role, RowId, TableName, Timestamp, WriteOp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
-use xops_store::{Row, Store, WriteEngine, WriteRequest, keys, space};
+use xops_store::{Store, WriteEngine, WriteRequest};
 use xops_table::{Filter, MAX_SCAN, TableId, Tables};
 
 use crate::board::{Board, BoardId, BoardSpec, Direction, check_boardable};
@@ -407,33 +407,12 @@ impl ReadModel {
     }
 
     fn all_boards(&self) -> Result<Vec<Board>> {
-        let table = TableName::new(BOARDS_TABLE)?;
-        let prefix = keys::table_prefix(&table);
-        let mut out = Vec::new();
-        let mut cursor: Option<Vec<u8>> = None;
-        loop {
-            let page = self
-                .store
-                .scan(space::ROW, &prefix, cursor.as_deref(), 256)?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|(key, _)| key.clone());
-            for (_, bytes) in page {
-                let row: Row = serde_json::from_slice(&bytes)
-                    .map_err(|error| Error::internal(format!("看板读不回来：{error}")))?;
-                if row.is_deleted() {
-                    continue;
-                }
-                let Some(envelope) = AuditEnvelope::from_payload(&row.payload) else {
-                    continue;
-                };
-                let board: Board = serde_json::from_value(envelope.data)
-                    .map_err(|error| Error::internal(format!("看板读不回来：{error}")))?;
-                out.push(board);
-            }
-        }
-        Ok(out)
+        Ok(
+            xops_audit::projection::all_strict::<Board>(self.store.as_ref(), BOARDS_TABLE)?
+                .into_iter()
+                .map(|(_, board)| board)
+                .collect(),
+        )
     }
 }
 

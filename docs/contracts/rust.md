@@ -1197,9 +1197,13 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 通知的写入与读取。
 - ⚠️ **`notify` 的返回类型里没有 `Result`**——它交回一组 `Failure`。
   这是 `NTF-008` 的落法：调用方**拿不到一个能用 `?` 把业务写带崩的东西**，
-  于是"通知的失败绝不影响产生该事件的业务操作"成为**结构保证**，
-  而不是"几乎不会失败"这种概率话术（`I-W`）。
+  于是"通知的失败绝不影响产生该事件的业务操作"成为**结构保证**（`I-W`）。
 - `unread` 没有"看别人的"那个参数；`mark_read` 写下去的 patch 里**只有 `readAt`**。
+- **`_notices` 现在有一张关系投影**（`D60`）：`user` · `createdAt` · `retainUntil`
+  上有真索引。`unread` 是一次索引查，不再是全表扫。
+  **`_notices` 是全局表、留三个月、每次读都是"我的未读按时间倒序"——扫全表在这里必然会输。**
+- 写的顺序是**先事件后投影**：反过来会出现"索引里有、账上没有"。
+- 构造函数因此多一个 `Relations`，并且**返回 `Result`**（要声明那张投影）。
 
 ### Element: rust:xops-notice#Retention
 - module: xops-notice
@@ -1354,3 +1358,65 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   那几件事在拿到全部命中之前答不出来。
 - `ceiling` 是**扫描上限**（扫过的行数，不是命中的行数）：**超了明确失败，绝不截断**。
   撞上了的正确动作是**给那一列加一条索引**，不是把这个数字调大（`MAX_SCAN`）。
+
+### Element: rust:xops-store#Relations
+- module: xops-store
+- consumers: [RP-17, xopsd]
+- **第二条存储缝**（`D60`）：带索引的当前视图。**五个方法**，有测试钉着这个数——
+  多出来的每一个都是下一个实现要额外兑现的承诺。
+- 它与 `Store` **平级，不在它下面**：一个管事件与键值投影，一个管按别的列找。
+- ⚠️ **它是缓存，不是账。** 账在事件流里，关系投影是事件之后的第二次落地——
+  所以 `I-N` 不受影响，漂了**清空重放**即可。**能重建这件事本身就是它敢做缓存的理由。**
+- ⚠️ **没有违反 `CON-012`**：那条禁用的是触发器 · 存储过程 · 行锁 · 隔离级别 ·
+  MVCC · 外键 · 级联 · JSON 列。`CREATE TABLE` 与 `CREATE INDEX` 不在其中，
+  而且它们在 SQLite / MySQL / PostgreSQL 上是同一个东西。
+- **两个实现跑同一组一致性测试**（`SqliteRelations` / `MemoryRelations`）——
+  `G12` 的验收对两条缝都成立。内存那个不是桩，**它是契约正确性的证据**。
+
+### Element: rust:xops-store#Relation
+- module: xops-store
+- consumers: [RP-17]
+- 一张关系投影的声明：名字 + 列（类型、要不要索引）。
+- 名字与列名过一个**白名单形状**——它们进的是 SQL 标识符的位置，那里不能用参数占位。
+  **这不是"清洗输入"，是只认一个形状。**
+- ⚠️ **重名按大小写不敏感判**：目标库是 MySQL，那里的列名不区分大小写。
+  在 SQLite 上 `readAt` 与 `readat` 是两列，换过去就是同一列——
+  **这种差异要在声明这一刻挡住，不要留到迁移那天。**
+
+### Element: rust:xops-store#Select
+- module: xops-store
+- consumers: [RP-17]
+- **四个算子**：等值 · 为空 · 非空 · 不大于。
+  **每一个都有一处真实调用把它带出来**，不是先设计一套语言再找用处。
+- 引用了没声明过的列**当场失败**——拼错的列名会表现成"没有数据"，那种失败查起来很慢。
+
+### Element: rust:xops-store#SqliteRelations
+- module: xops-store
+- consumers: [xopsd]
+- 与 `SqliteStore` **共用同一条连接**，所以在同一个库文件里。
+- 表名 `rel_<关系名>`，行标识存成 26 字符文本形态——**排序与二进制一致**（都是时间序），
+  而且拿 `sqlite3` 直接看这张表时它是可读的。
+
+### Element: rust:xops-store#MemoryRelations
+- module: xops-store
+- consumers: [xopsd, 测试]
+- 第二条缝的第二实现。**null 排在最前**这类最容易在两个实现之间漂的细节，
+  一致性测试里各有一条。
+
+### Element: rust:xops-audit#projection
+- module: xops-audit
+- consumers: [RP-02, RP-05, RP-08, RP-09, RP-10, RP-14]
+- 把一张**平台表**的投影整张读回来。这段循环原本在六个包里各抄了一份，一个字不差。
+- ⚠️ **抄六份的代价不在今天，在换存储的那天**：要改的地方有六处，
+  而且没有谁提醒你漏了一处。
+- 两个函数的差别只有一处：**解不动的行是跳过还是报错**。
+  跳过适合"同一张表上并存着不同形状"的表；报错适合"这张表只有一种行"的表。
+- ⚠️ **它是整张读。** 平台表的量级是"一个部署里的技能数、任务数"，不是行数据。
+  真有一天不合适了，该做的是**把那张表独立成一张带索引的真表**（`D60`），
+  不是在这里加参数。
+
+### Element: rust:xops-notice#Notices::rebuild
+- module: xops-notice
+- consumers: [xopsd]
+- 从账重放关系投影。**漂了不需要修补，清空重放就行。**
+  换库、加列、或者哪次写只落了一半，走的都是这条路。

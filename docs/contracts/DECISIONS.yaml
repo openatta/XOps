@@ -10,7 +10,20 @@
 #
 # entries: [] 是一条断言——"本仓当前没有待拍板的破坏性契约变更"，不是空文件。
 condition: contractDecisions
-entries: []
+entries:
+  - id: cbc-plugin-readtable-page
+    question: >-
+      给插件的 xops.readTable 接游标，回话从一个数组变成 {rows, next}。
+      这会打断已安装的、声明了读表能力的输出插件——要不要走 expand-contract
+      （加一个新函数名，旧的留一个发布周期）？
+    decision: >-
+      直接改，不走 expand-contract。本仓还没有部署，已安装插件数为零，
+      加一个并行的函数名换回的只是两个做同一件事的绑定。
+      ⚠️ 真有存量之后这条不再成立：那时正确的做法是加新名字而不是改这个——
+      因为插件版本不可变（PLG-009），改了要重新生成候选再装一次，
+      而那是维护者的一次人工动作，不该由平台升级替他决定。
+    decidedBy: xbitsmaster
+    decidedAt: 2026-09-01T00:00:00Z
 
 # 填一条长这样（把 entries: [] 换成 entries: 再往下缩进）：
 #

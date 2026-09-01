@@ -273,7 +273,7 @@ fn 声明之外的表连不上() {
             host: Some(host),
         };
         let mine = invoke(
-            "function run() { return { rows: xops.readTable('bugs', 10).length }; }",
+            "function run() { return { rows: xops.readTable('bugs', 10).rows.length }; }",
             "run",
             &json!({}),
             Position::Output,

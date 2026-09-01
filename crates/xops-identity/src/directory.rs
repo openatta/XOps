@@ -16,7 +16,7 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use xops_audit::{AuditEnvelope, AuditLog, kinds};
 use xops_core::{Actor, Clock, Error, Id, Result, Role, RowId, TableName, Timestamp, WriteOp};
-use xops_store::{Row, Store, WriteEngine, WriteRequest, keys, space};
+use xops_store::{Store, WriteEngine, WriteRequest};
 
 use crate::permission::{Action, can_in};
 use crate::project::{Member, MemberChange, Project, ProjectId, Slug, owners_after};
@@ -667,33 +667,7 @@ impl Directory {
     /// ⚠️ **这是一次全表扫描。** 平台表的规模是「一个部署里的人与项目」，M1 够用；
     /// 真到要建二级索引的那天，它该建在这里，而不是让调用方各自记一份。
     fn all<T: DeserializeOwned>(&self, table: &str) -> Result<Vec<(RowId, T)>> {
-        let table = TableName::new(table)?;
-        let prefix = keys::table_prefix(&table);
-        let mut out = Vec::new();
-        let mut cursor: Option<Vec<u8>> = None;
-        loop {
-            let page = self
-                .store
-                .scan(space::ROW, &prefix, cursor.as_deref(), 256)?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|(key, _)| key.clone());
-            for (_, bytes) in page {
-                let row: Row = serde_json::from_slice(&bytes)
-                    .map_err(|error| Error::internal(format!("投影读不回来：{error}")))?;
-                if row.is_deleted() {
-                    continue;
-                }
-                let Some(envelope) = AuditEnvelope::from_payload(&row.payload) else {
-                    continue;
-                };
-                let value = serde_json::from_value(envelope.data)
-                    .map_err(|error| Error::internal(format!("{table} 的行读不回来：{error}")))?;
-                out.push((row.row, value));
-            }
-        }
-        Ok(out)
+        xops_audit::projection::all_strict(self.store.as_ref(), table)
     }
 }
 

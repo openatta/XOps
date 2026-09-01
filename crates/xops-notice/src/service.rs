@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use xops_core::{Clock, Error, Id, Result, RowId, Timestamp};
 use xops_identity::{Directory, ProjectId, UserId};
+use xops_store::{Column, Relation, Relations, Select};
 use xops_table::{Filter, MAX_SCAN, TableId, Tables, WrittenBy, system};
 
 use crate::derive::{Derived, SourceEvent, from_event, materialize};
@@ -23,6 +24,37 @@ use crate::retention::Retention;
 
 /// 通知落在这张平台**全局**表上（`TBL-010`、`NTF-014`）。
 pub const NOTICES_TABLE: &str = system::NOTICES;
+
+/// 通知的**关系投影**：一张真表，`user` 与 `createdAt` 上有真索引。
+///
+/// # 为什么单独给它一张真表
+///
+/// `_notices` 是全局表、留三个月、每次读都是"**我的**未读，按时间倒序"。
+/// 扫全表再过滤在这里必然会输——**而手写一条键值二级索引是在重新实现
+/// 数据库已经做好的事，引入复杂性而没有收益**。
+///
+/// ⚠️ **它是缓存,不是账。** 账在 `_notices` 的事件流里：写照样先追加事件
+/// （`I-N` 不受影响），关系投影是事件之后的第二次落地。漂了就
+/// [`Notices::rebuild`]，不需要修补。
+pub const NOTICES_RELATION: &str = "notices";
+
+/// 关系投影的列。**只放"用来找"的那几样**，正文跟着载荷走。
+fn relation() -> Relation {
+    Relation {
+        name: NOTICES_RELATION.to_owned(),
+        columns: vec![
+            // 每次读都按它筛 —— 这是全系统最该有索引的一列。
+            Column::text("user", true),
+            // 倒序取最新的那几条。
+            Column::integer("createdAt", true),
+            // 未读 = 它为空。**不建索引**：它与 user 一起用，
+            // user 那条已经把候选集压到一个人的量级了。
+            Column::integer("readAt", false),
+            // 到期清理按它整批捞（`RET-005`）。
+            Column::integer("retainUntil", true),
+        ],
+    }
+}
 
 /// 一次没写进去的通知。**它是痕迹，不是异常。**
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +68,7 @@ pub struct Failure {
 /// 通知。
 pub struct Notices {
     tables: Arc<Tables>,
+    relations: Arc<dyn Relations>,
     directory: Arc<Directory>,
     clock: Arc<dyn Clock>,
     retention: Retention,
@@ -52,15 +85,23 @@ impl std::fmt::Debug for Notices {
 }
 
 impl Notices {
-    #[must_use]
-    pub fn new(tables: Arc<Tables>, directory: Arc<Directory>, clock: Arc<dyn Clock>) -> Self {
-        Self {
+    /// # Errors
+    /// 关系投影建不起来。
+    pub fn new(
+        tables: Arc<Tables>,
+        relations: Arc<dyn Relations>,
+        directory: Arc<Directory>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        relations.declare(&relation())?;
+        Ok(Self {
             tables,
+            relations,
             directory,
             clock,
             retention: Retention::default(),
             failures: Mutex::new(Vec::new()),
-        }
+        })
     }
 
     #[must_use]
@@ -114,25 +155,25 @@ impl Notices {
     /// # Errors
     /// 底层不可用。
     pub fn unread(&self, viewer: UserId, limit: usize) -> Result<Vec<Notice>> {
-        // ⚠️ **`user` 是一个谓词，不是「前一万行里凑巧是我的那些」。**
+        // **一次索引查**：`user = 我` + `readAt 为空`，按 `createdAt` 倒序取前 N。
         //
-        // 旧写法扫前一万行再过滤：`_notices` 是全局表、留三个月，二十个人用两个月
-        // 就能过一万——过了之后**新通知反而看不见**，因为截断留下的是最老的一批。
+        // 早先这里是"扫前一万行再过滤"。`_notices` 是全局表、留三个月——
+        // 过了一万之后**新通知反而看不见**，因为行 ID 时间有序，截断留下的是最老的一批。
+        // 而且它是静默的:没有报错,只有"怎么没收到通知"。
         //
-        // 这里的代价是一次全表扫描。**`_notices.user` 是全系统最该先加索引的那一列**，
-        // 加上之后这个调用就变成一次索引点查，而调用方一行不用改。
-        let mut mine: Vec<Notice> = self
-            .matching(&[Filter::equals("user", viewer.to_string())])?
+        // 跨项目一起排 —— 这是 `NTF-014` 那句"在一个地方看得到"。
+        self.relations
+            .select(
+                NOTICES_RELATION,
+                &Select::new()
+                    .equal("user", viewer.to_string())
+                    .null("readAt")
+                    .newest_first("createdAt")
+                    .take(limit),
+            )?
             .into_iter()
             .map(|(_, values)| Self::from_row(&values))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .filter(Notice::unread)
-            .collect();
-        // 新的在前。**跨项目一起排**——这是 `NTF-014` 的那句"在一个地方看得到"。
-        mine.sort_by_key(|notice| std::cmp::Reverse(notice.created_at.as_millis()));
-        mine.truncate(limit);
-        Ok(mine)
+            .collect()
     }
 
     /// 标记已读（`NTF-009` 的第二个 tool、`NTF-011`）。
@@ -165,6 +206,11 @@ impl Notices {
             // **只有这一列。** 多写一个键，"只能改这一列"就没了。
             json!({"readAt": at.as_millis()}),
         )?;
+        // 账已经记上了，跟着刷投影。**读回来再写**——`update` 的语义是合并，
+        // 这里要的是合并之后的那一行，不是刚才那个 patch。
+        if let Some(merged) = self.tables.get(None, &Self::table()?, row)? {
+            self.relations.upsert(NOTICES_RELATION, row, &merged)?;
+        }
         Ok(record)
     }
 
@@ -174,19 +220,37 @@ impl Notices {
     /// 底层不可用。
     pub fn prune(&self, now: Timestamp) -> Result<usize> {
         let table = Self::table()?;
+        // **按 `retainUntil` 一次索引查**，不是扫全表。整批按时间，不挑行。
+        let due = self.relations.select(
+            NOTICES_RELATION,
+            &Select::new().no_later_than("retainUntil", now.as_millis()),
+        )?;
         let mut swept = 0;
-        for (row, values) in self.matching(&[])? {
-            let expired = values
-                .get("retainUntil")
-                .and_then(Value::as_i64)
-                .is_some_and(|until| until <= now.as_millis());
-            if expired {
-                self.tables
-                    .delete(&WrittenBy::Platform, None, &table, row)?;
-                swept += 1;
-            }
+        for (row, _) in due {
+            // 账先删（软删，事件照写），再删投影。
+            self.tables
+                .delete(&WrittenBy::Platform, None, &table, row)?;
+            self.relations.remove(NOTICES_RELATION, row)?;
+            swept += 1;
         }
         Ok(swept)
+    }
+
+    /// 从账重建关系投影（`RET-005` 之外的那件事：**它是缓存**）。
+    ///
+    /// 关系投影漂了不需要修补,清空重放就行——**能重建这件事本身就是它敢做缓存的理由**。
+    /// 换库、加列、或者哪次写只落了一半，走的都是这条路。
+    ///
+    /// # Errors
+    /// 底层不可用，或者 `_notices` 大到扫不动（那时该看的是保留期，不是这个函数）。
+    pub fn rebuild(&self) -> Result<usize> {
+        self.relations.clear(NOTICES_RELATION)?;
+        let rows = self.matching(&[])?;
+        let count = rows.len();
+        for (row, values) in rows {
+            self.relations.upsert(NOTICES_RELATION, row, &values)?;
+        }
+        Ok(count)
     }
 
     // ——————————————————————————————— 内部 ———————————————————————————————
@@ -208,11 +272,7 @@ impl Notices {
     }
 
     fn append(&self, notice: &Notice) -> Result<RowId> {
-        self.tables.insert(
-            &WrittenBy::Platform,
-            None,
-            &Self::table()?,
-            json!({
+        let values = json!({
                 "notice": notice.id.to_string(),
                 "user": notice.user.to_string(),
                 "project": notice.project.map(|project| project.to_string()),
@@ -221,8 +281,14 @@ impl Notices {
                 "text": notice.text,
                 "createdAt": notice.created_at.as_millis(),
                 "retainUntil": self.retention.retain_until(notice.created_at).as_millis(),
-            }),
-        )
+        });
+        // **先事件后投影**：`Tables::insert` 那一步追加事件并落键值投影（`I-N`），
+        // 关系投影是它之后的第二次落地。顺序反过来就会出现"索引里有、账上没有"。
+        let row =
+            self.tables
+                .insert(&WrittenBy::Platform, None, &Self::table()?, values.clone())?;
+        self.relations.upsert(NOTICES_RELATION, row, &values)?;
+        Ok(row)
     }
 
     fn table() -> Result<TableId> {

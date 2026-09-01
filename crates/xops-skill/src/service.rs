@@ -12,7 +12,7 @@ use std::sync::Arc;
 use xops_audit::{AuditEnvelope, AuditLog};
 use xops_core::{Actor, Clock, Error, Id, Result, RowId, TableName, Timestamp, WriteOp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
-use xops_store::{Row, Store, WriteEngine, WriteRequest, keys, space};
+use xops_store::{Store, WriteEngine, WriteRequest};
 
 use crate::declaration::Declaration;
 use crate::skill::{Ownership, Skill, SkillId, State, Version};
@@ -472,33 +472,7 @@ impl Skills {
     }
 
     fn all<T: serde::de::DeserializeOwned>(&self, table: &str) -> Result<Vec<T>> {
-        let table = TableName::new(table)?;
-        let prefix = keys::table_prefix(&table);
-        let mut out = Vec::new();
-        let mut cursor: Option<Vec<u8>> = None;
-        loop {
-            let page = self
-                .store
-                .scan(space::ROW, &prefix, cursor.as_deref(), 256)?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|(key, _)| key.clone());
-            for (_, bytes) in page {
-                let row: Row = serde_json::from_slice(&bytes)
-                    .map_err(|error| Error::internal(format!("投影读不回来：{error}")))?;
-                if row.is_deleted() {
-                    continue;
-                }
-                let Some(envelope) = AuditEnvelope::from_payload(&row.payload) else {
-                    continue;
-                };
-                if let Ok(value) = serde_json::from_value::<T>(envelope.data) {
-                    out.push(value);
-                }
-            }
-        }
-        Ok(out)
+        xops_audit::projection::all(self.store.as_ref(), table)
     }
 }
 

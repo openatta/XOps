@@ -150,3 +150,31 @@ fn 存储契约就只有四个方法() {
         "存储契约的方法集合变了"
     );
 }
+
+#[test]
+fn 关系投影的契约就那五个方法() {
+    // 第二条缝也要有这条纪律:多出来的每一个方法,都是下一个实现要额外兑现的承诺。
+    //
+    // ⚠️ `sqlite.rs` 里那部分的"不依赖数据库特有能力"已经由上面那条覆盖了——
+    // 它读的是整个文件。`CREATE TABLE` 与 `CREATE INDEX` **不在 `CON-012` 的
+    // 排除清单里**,而且它们在 SQLite / MySQL / PostgreSQL 上是同一个东西。
+    let path = repo_root().join("crates/xops-store/src/relation.rs");
+    let code = code_only(&fs::read_to_string(&path).expect("读不到 relation.rs"));
+    let trait_body = code
+        .split_once("pub trait Relations")
+        .expect("找不到 Relations trait")
+        .1
+        .split_once("\n}")
+        .expect("Relations trait 没有收尾")
+        .0;
+    let methods: Vec<&str> = trait_body
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("fn "))
+        .filter_map(|line| line.split(['(', '<']).next())
+        .collect();
+    assert_eq!(
+        methods,
+        vec!["declare", "upsert", "remove", "select", "clear"],
+        "关系投影契约的方法集合变了"
+    );
+}

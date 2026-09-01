@@ -12,15 +12,17 @@
 pub mod keys;
 pub mod locks;
 pub mod memory;
+pub mod relation;
 pub mod serial;
 pub mod sqlite;
 pub mod store;
 
 pub use locks::{Held, TableLocks};
-pub use memory::MemoryStore;
+pub use memory::{MemoryRelations, MemoryStore};
+pub use relation::{Column, Direction, Relation, Relations, Select, ValueKind};
 pub use serial::{
     Deferred, EvalScope, Evaluate, PreWrite, Receipt, Row, RowView, SchemaCheck, WriteEngine,
     WriteRequest, Writeback,
 };
-pub use sqlite::SqliteStore;
+pub use sqlite::{SqliteRelations, SqliteStore};
 pub use store::{Store, space};

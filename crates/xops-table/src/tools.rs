@@ -17,6 +17,7 @@ use xops_mcp::{Field, FieldType, Schema};
 
 use crate::column::{BLOB_MAX, Column, ColumnType, LONG_TEXT_MAX, TEXT_MAX};
 use crate::engine::{Tables, kinds};
+use crate::query::Query;
 use crate::table::{Kind, Protection, TableId, TableSchema};
 use crate::writtenby::WrittenBy;
 
@@ -383,11 +384,17 @@ impl RowTool {
             }
         }
         if op.is_none() {
-            input = input.field(Field::optional(
-                "limit",
-                FieldType::Integer,
-                "最多取几行。**按写入序给最老的那几行**，不是最新的；没有筛选也没有游标",
-            ));
+            input = input
+                .field(Field::optional(
+                    "limit",
+                    FieldType::Integer,
+                    "这一页最多几行。**按写入序**，最老的在前",
+                ))
+                .field(Field::optional(
+                    "after",
+                    FieldType::Text { max_len: 26 },
+                    "游标：从这一行**之后**接着取。把上一页回话里的 `next` 原样传回来",
+                ));
         }
         let requirement = match op {
             Some(_) => Requirement::InProject(Tables::write_action(schema)),
@@ -466,15 +473,31 @@ impl Tool for RowTool {
                     .and_then(Value::as_i64)
                     .and_then(|limit| usize::try_from(limit).ok())
                     .unwrap_or(100);
-                // ⚠️ **这里给的是最老的 `limit` 行**（按写入序）。它没有筛选、没有游标——
-                // 想要"最新的"或者"某一列等于某值的"，现在只能自己翻。
-                // `Tables::query` 已经有游标了，把它接到这个 tool 上是下一步。
-                let rows = self.tables.rows(project, name, limit.min(1_000))?;
+                // **按写入序翻页。** 回话里带 `next`：把它原样传回来就是下一页。
+                //
+                // ⚠️ 一页给的是**最老的那几行**，不是最新的。想看最新的就一直翻到
+                // `next` 为 null——**这一层有意不做倒序**：倒序要么是一次全表读，
+                // 要么要一条索引，两样都不该由一个 tool 悄悄替调用方决定。
+                let after = context
+                    .arg("after")
+                    .and_then(Value::as_str)
+                    .map(|cursor| Id::parse(cursor).map(RowId::from_id))
+                    .transpose()?;
+                let page = self.tables.query(
+                    project,
+                    name,
+                    &Query {
+                        filters: Vec::new(),
+                        limit: limit.min(1_000),
+                        after,
+                    },
+                )?;
                 Ok(json!({
-                    "rows": rows
+                    "rows": page.rows
                         .into_iter()
                         .map(|(row, values)| json!({"row": row.to_string(), "values": values}))
                         .collect::<Vec<_>>(),
+                    "next": page.next.map(|row| row.to_string()),
                 }))
             }
         }

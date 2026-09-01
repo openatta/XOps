@@ -13,7 +13,7 @@ use xops_identity::{Directory, ExternalAccount, ProjectId, ProviderId, Slug, Use
 use xops_notice::derive::SourceEvent;
 use xops_notice::notice::Kind;
 use xops_notice::{Notices, Retention};
-use xops_store::{MemoryStore, SqliteStore, Store, WriteEngine};
+use xops_store::{MemoryRelations, MemoryStore, Relations, SqliteStore, Store, WriteEngine};
 use xops_table::engine::Catalog;
 use xops_table::table::{Protection, TableId};
 use xops_table::{Column, ColumnType, Tables};
@@ -53,6 +53,7 @@ impl Store for NoticesUnwritable {
 struct Fixture {
     label: &'static str,
     notices: Arc<Notices>,
+    relations: Arc<dyn Relations>,
     tables: Arc<Tables>,
     directory: Arc<Directory>,
     clock: Arc<dyn Clock>,
@@ -87,14 +88,20 @@ fn build(label: &'static str, store: Arc<dyn Store>) -> Fixture {
         store,
     ));
     tables.ensure_global_tables().unwrap();
-    let notices = Arc::new(Notices::new(
-        Arc::clone(&tables),
-        Arc::clone(&directory),
-        clock.clone(),
-    ));
+    let relations: Arc<dyn Relations> = Arc::new(MemoryRelations::new());
+    let notices = Arc::new(
+        Notices::new(
+            Arc::clone(&tables),
+            Arc::clone(&relations),
+            Arc::clone(&directory),
+            clock.clone(),
+        )
+        .unwrap(),
+    );
     Fixture {
         label,
         notices,
+        relations,
         tables,
         directory,
         clock,
@@ -451,26 +458,16 @@ fn 非项目成员收不到() {
 fn 通知表过了旧上限之后新通知照样看得见() {
     let fixture = build("memory", Arc::new(MemoryStore::new()));
     let scene = scene(&fixture);
-    let notices_table = TableId::system(xops_table::system::NOTICES).unwrap();
 
     // 先塞过旧的那个上限。**这些都不是给 bob 的**——它们只负责把他挤到截断线外。
-    for index in 0..10_100 {
-        fixture
-            .tables
-            .insert(
-                &xops_table::WrittenBy::Platform,
-                None,
-                &notices_table,
-                json!({
-                    "notice": xops_core::Id::generate().to_string(),
-                    "user": scene.alice.to_string(),
-                    "kind": "run-finished",
-                    "subject": format!("噪声 {index}"),
-                    "text": "别人的通知",
-                    "createdAt": 1,
-                }),
-            )
-            .unwrap();
+    // 走的是真的 `notify`，所以它们既在账上，也在关系投影里。
+    for _ in 0..10_100 {
+        assert!(
+            fixture
+                .notices
+                .notify(&awaiting(scene.project, &[scene.alice]))
+                .is_empty()
+        );
     }
 
     // 现在给 bob 发一条 —— 它排在第 10101 位。
@@ -607,9 +604,11 @@ fn 按自己的保留期整批清理() {
         let short = Arc::new(
             Notices::new(
                 Arc::clone(&fixture.tables),
+                Arc::clone(&fixture.relations),
                 Arc::clone(&fixture.directory),
                 Arc::clone(&fixture.clock),
             )
+            .unwrap()
             .with_retention(Retention { keep_days: 1 }),
         );
         short.notify(&awaiting(scene.project, &[scene.bob]));
@@ -623,6 +622,71 @@ fn 按自己的保留期整批清理() {
         let later = Timestamp::from_millis(now.as_millis() + 2 * 24 * 60 * 60 * 1_000);
         assert_eq!(short.prune(later).unwrap(), 1);
         assert!(short.unread(scene.bob, 100).unwrap().is_empty());
+    }
+}
+
+/// **关系投影是缓存,不是账。**
+///
+/// 这一条把那句话变成可执行的:把投影整个清掉,账还在——重放一次就全回来了。
+/// 能重建这件事本身就是它敢做缓存的理由;漂了不需要修补。
+#[test]
+fn 投影清掉之后从账上重建得回来() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let scene = scene(&fixture);
+        for _ in 0..3 {
+            fixture
+                .notices
+                .notify(&awaiting(scene.project, &[scene.bob]));
+        }
+        assert_eq!(fixture.notices.unread(scene.bob, 100).unwrap().len(), 3);
+
+        // 把投影整个清掉 —— 模拟"漂了"。
+        fixture.relations.clear("notices").unwrap();
+        assert!(
+            fixture.notices.unread(scene.bob, 100).unwrap().is_empty(),
+            "{label}：投影没了就查不到，它确实是查询走的那条路"
+        );
+
+        // 账还在。重放一次。
+        assert_eq!(fixture.notices.rebuild().unwrap(), 3, "{label}：账上有三条");
+        assert_eq!(
+            fixture.notices.unread(scene.bob, 100).unwrap().len(),
+            3,
+            "{label}：全回来了"
+        );
+    }
+}
+
+/// 单独一行漂了也一样修得回来——**不需要知道是哪一行漂的**。
+#[test]
+fn 漂了不需要修补只需要重放() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let scene = scene(&fixture);
+        fixture
+            .notices
+            .notify(&awaiting(scene.project, &[scene.bob]));
+        let one = fixture.notices.unread(scene.bob, 100).unwrap();
+        let row = fixture
+            .tables
+            .rows(
+                None,
+                &TableId::system(xops_table::system::NOTICES).unwrap(),
+                8,
+            )
+            .unwrap()[0]
+            .0;
+
+        fixture.relations.remove("notices", row).unwrap();
+        assert!(fixture.notices.unread(scene.bob, 100).unwrap().is_empty());
+
+        fixture.notices.rebuild().unwrap();
+        assert_eq!(
+            fixture.notices.unread(scene.bob, 100).unwrap(),
+            one,
+            "{label}：一模一样地回来了"
+        );
     }
 }
 

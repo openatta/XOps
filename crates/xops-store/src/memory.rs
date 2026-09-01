@@ -8,8 +8,10 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use xops_core::{Error, Result};
+use serde_json::Value;
+use xops_core::{Error, Result, RowId};
 
+use crate::relation::{Direction, Relation, Relations, Select};
 use crate::store::{Store, prefix_end};
 
 /// 键是 `(空间, 键)`，排序即扫描顺序。
@@ -99,5 +101,129 @@ impl Store for MemoryStore {
             }
         }
         Ok(out)
+    }
+}
+
+// ——————————————————————————————— 关系投影 ———————————————————————————————
+
+/// 关系投影的内存实现。
+///
+/// **它不是桩**，理由与 [`MemoryStore`] 那句一样：只写一个实现的契约会不自觉地
+/// 长成那个实现的形状。两条缝各有一个第二实现，`G12` 的验收才对两条都跑得起来。
+#[derive(Debug, Default)]
+pub struct MemoryRelations {
+    declared: Mutex<BTreeMap<String, Relation>>,
+    rows: Mutex<BTreeMap<(String, RowId), Value>>,
+}
+
+impl MemoryRelations {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn relation(&self, name: &str) -> Result<Relation> {
+        self.declared
+            .lock()
+            .map_err(|_| Error::internal("关系投影声明的锁中毒了"))?
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::invalid(format!("没有声明过 {name} 这张关系投影")))
+    }
+}
+
+impl Relations for MemoryRelations {
+    fn declare(&self, relation: &Relation) -> Result<()> {
+        relation.check()?;
+        self.declared
+            .lock()
+            .map_err(|_| Error::internal("关系投影声明的锁中毒了"))?
+            .entry(relation.name.clone())
+            .or_insert_with(|| relation.clone());
+        Ok(())
+    }
+
+    fn upsert(&self, relation: &str, row: RowId, values: &Value) -> Result<()> {
+        self.relation(relation)?;
+        self.rows
+            .lock()
+            .map_err(|_| Error::internal("关系投影的锁中毒了"))?
+            .insert((relation.to_owned(), row), values.clone());
+        Ok(())
+    }
+
+    fn remove(&self, relation: &str, row: RowId) -> Result<()> {
+        self.rows
+            .lock()
+            .map_err(|_| Error::internal("关系投影的锁中毒了"))?
+            .remove(&(relation.to_owned(), row));
+        Ok(())
+    }
+
+    fn select(&self, relation: &str, select: &Select) -> Result<Vec<(RowId, Value)>> {
+        let declared = self.relation(relation)?;
+        select.check(&declared)?;
+        let rows = self
+            .rows
+            .lock()
+            .map_err(|_| Error::internal("关系投影的锁中毒了"))?;
+        let mut hit: Vec<(RowId, Value)> = rows
+            .iter()
+            .filter(|((name, _), _)| name == relation)
+            .filter(|(_, values)| matches(select, values))
+            .map(|((_, row), values)| (*row, values.clone()))
+            .collect();
+        if let Some((column, direction)) = &select.order {
+            hit.sort_by(|left, right| {
+                let ordering = compare(left.1.get(column), right.1.get(column));
+                match direction {
+                    Direction::Asc => ordering,
+                    Direction::Desc => ordering.reverse(),
+                }
+            });
+        }
+        if select.limit > 0 {
+            hit.truncate(select.limit);
+        }
+        Ok(hit)
+    }
+
+    fn clear(&self, relation: &str) -> Result<()> {
+        self.rows
+            .lock()
+            .map_err(|_| Error::internal("关系投影的锁中毒了"))?
+            .retain(|(name, _), _| name != relation);
+        Ok(())
+    }
+}
+
+fn matches(select: &Select, values: &Value) -> bool {
+    let absent = |column: &str| values.get(column).is_none_or(Value::is_null);
+    select
+        .equals
+        .iter()
+        .all(|(column, value)| values.get(column) == Some(value))
+        && select.is_null.iter().all(|column| absent(column))
+        && select.is_not_null.iter().all(|column| !absent(column))
+        && select.at_most.iter().all(|(column, bound)| {
+            values
+                .get(column)
+                .and_then(Value::as_i64)
+                .is_some_and(|found| found <= *bound)
+        })
+}
+
+/// 与 SQLite 的排序对齐：null 最小，然后数字，然后文本。
+fn compare(left: Option<&Value>, right: Option<&Value>) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (left, right) {
+        (None | Some(Value::Null), None | Some(Value::Null)) => Ordering::Equal,
+        (None | Some(Value::Null), _) => Ordering::Less,
+        (_, None | Some(Value::Null)) => Ordering::Greater,
+        (Some(Value::Number(a)), Some(Value::Number(b))) => a
+            .as_f64()
+            .partial_cmp(&b.as_f64())
+            .unwrap_or(Ordering::Equal),
+        (Some(a), Some(b)) => a.to_string().cmp(&b.to_string()),
     }
 }

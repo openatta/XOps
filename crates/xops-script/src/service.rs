@@ -13,11 +13,11 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use xops_audit::{AuditEnvelope, AuditLog};
-use xops_core::{Actor, Clock, Error, Result, RowId, Timestamp};
+use xops_core::{Actor, Clock, Error, Id, Result, RowId, Timestamp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
 use xops_repo::{Sealer, Secret};
 use xops_store::{Store, space};
-use xops_table::{Filter, MAX_SCAN, TableId, Tables, WrittenBy, system};
+use xops_table::{Filter, MAX_SCAN, Query, TableId, Tables, WrittenBy, system};
 
 use crate::capability::{Capabilities, Position};
 use crate::carrier::Host;
@@ -538,7 +538,7 @@ impl Host for PluginHost {
         Ok(self.config.clone())
     }
 
-    fn read_table(&self, table: &str, limit: usize) -> Result<Value> {
+    fn read_table(&self, table: &str, limit: usize, after: Option<&str>) -> Result<Value> {
         let name = if table.starts_with('_') {
             TableId::system(table)?
         } else {
@@ -548,15 +548,23 @@ impl Host for PluginHost {
         if !self.capabilities.allows_table(&name) {
             return Err(Error::invalid(format!("{table} 不在声明之列")));
         }
-        // ⚠️ **给的是最老的 `limit` 行**（按写入序）。插件想要"最近的那些"时
-        // 这不是它期待的答案——把游标接上来是下一步。
-        let rows = self
-            .tables
-            .rows(Some(self.project), &name, limit)?
-            .into_iter()
-            .map(|(_, values)| values)
-            .collect::<Vec<_>>();
-        Ok(Value::Array(rows))
+        // **按写入序翻页**：回话里带 `next`，传回来就是下一页。
+        let after = after
+            .map(|cursor| Id::parse(cursor).map(RowId::from_id))
+            .transpose()?;
+        let page = self.tables.query(
+            Some(self.project),
+            &name,
+            &Query {
+                filters: Vec::new(),
+                limit,
+                after,
+            },
+        )?;
+        Ok(json!({
+            "rows": page.rows.into_iter().map(|(_, values)| values).collect::<Vec<_>>(),
+            "next": page.next.map(|row| row.to_string()),
+        }))
     }
 
     fn net(&self) -> &dyn Net {

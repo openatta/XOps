@@ -196,3 +196,26 @@ sql:meta.projection.<规则>           事件到当前视图的投影规则
   只能改这一列（写下去的 patch 里只有 `readAt`）·
   **照样追加事件**（走表引擎的 update，它本来就只有"写事件"这一条路，`I-N`）。
 - ⚠️ **不要为它开一条通用的系统表写入路径**——那条路一开，`I-P` 与 `I-N` 都会跟着松。
+
+### Element: sql:relation.rel_notices
+- module: xops-store
+- `_notices` 的**关系投影**：一张真表，`user` · `createdAt` · `retainUntil` 上有真索引
+  （`D60`）。
+- 列：`row`（26 字符文本形态的行标识，主键）· `user` · `createdAt` · `readAt` ·
+  `retainUntil` · `payload`（整行 JSON）。
+- ⚠️ **它是缓存，不是账。** 账在 `_notices` 的事件流里——这张表可以整个删掉，
+  `Notices::rebuild` 从账上重放回来。所以 `I-N` 不受影响：
+  写照样先追加事件，它是事件之后的第二次落地。
+- ⚠️ **`readAt` 不建索引**：它总是与 `user` 一起用，而 `user` 那条已经把候选集
+  压到一个人的量级了。**每一条索引都要在写入那一侧还回去。**
+- 建它而不是在键值里手写一条二级索引，理由见 `D60`：
+  **手写索引是在重新实现数据库已经做好的事。**
+
+### Element: sql:meta.relation-naming
+- module: xops-store
+- 关系投影的表名是 `rel_<关系名>`，关系名与列名过一个白名单形状
+  （小写字母开头，只含字母数字下划线）——它们进的是 SQL 标识符的位置，
+  那里不能用参数占位。
+- ⚠️ **列名重名按大小写不敏感判**：目标库是 MySQL，那里的列名不区分大小写。
+  在 SQLite 上 `readAt` 与 `readat` 是两列，换过去就是同一列——
+  **这种差异在声明这一刻挡住，不留到迁移那天。**

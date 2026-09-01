@@ -9,6 +9,7 @@
 
 pub mod envelope;
 pub mod log;
+pub mod projection;
 
 pub use envelope::{AuditEnvelope, EventKind, Outcome, catalog, kinds};
 pub use log::{AUDIT_TABLE, AuditLog, AuditRecord, Query, data};

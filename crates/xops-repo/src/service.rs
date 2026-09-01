@@ -6,7 +6,7 @@ use std::sync::Arc;
 use xops_audit::{AuditEnvelope, AuditLog};
 use xops_core::{Actor, Clock, Error, Result, RowId, TableName, Timestamp, WriteOp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
-use xops_store::{Row, Store, WriteEngine, WriteRequest, keys, space};
+use xops_store::{Store, WriteEngine, WriteRequest};
 
 use crate::binding::Binding;
 use crate::credential::{Sealer, Secret};
@@ -287,33 +287,7 @@ impl Repos {
     /// # Errors
     /// 底层不可用。
     pub fn all(&self) -> Result<Vec<Binding>> {
-        let table = TableName::new(BINDINGS_TABLE)?;
-        let prefix = keys::table_prefix(&table);
-        let mut out = Vec::new();
-        let mut cursor: Option<Vec<u8>> = None;
-        loop {
-            let page = self
-                .store
-                .scan(space::ROW, &prefix, cursor.as_deref(), 256)?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|(key, _)| key.clone());
-            for (_, bytes) in page {
-                let row: Row = serde_json::from_slice(&bytes)
-                    .map_err(|error| Error::internal(format!("投影读不回来：{error}")))?;
-                if row.is_deleted() {
-                    continue;
-                }
-                let Some(envelope) = AuditEnvelope::from_payload(&row.payload) else {
-                    continue;
-                };
-                if let Ok(binding) = serde_json::from_value::<Binding>(envelope.data) {
-                    out.push(binding);
-                }
-            }
-        }
-        Ok(out)
+        xops_audit::projection::all(self.store.as_ref(), BINDINGS_TABLE)
     }
 }
 

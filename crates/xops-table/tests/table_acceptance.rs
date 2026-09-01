@@ -1089,3 +1089,41 @@ fn 读路径不再拿写死的上限去顶谓词() {
         }
     }
 }
+
+#[test]
+fn select的游标翻得完整张表() {
+    // `row.<表>.select` 现在带游标：把回话里的 `next` 传回来就是下一页。
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let alice = fixture.user("alice");
+        let (project, notes) = flagged(&fixture, alice);
+        fill(&fixture, alice, project, &notes, 12);
+        let token = fixture.token(alice);
+
+        let mut titles = Vec::new();
+        let mut after: Option<String> = None;
+        for _ in 0..10 {
+            let mut args = json!({"project": project.to_string(), "limit": 5});
+            if let Some(cursor) = &after {
+                args["after"] = json!(cursor);
+            }
+            let reply = fixture.call(&token, "row.notes.select", args);
+            assert!(reply.get("error").is_none(), "{label}：{reply}");
+            let page = &reply["result"]["structuredContent"];
+            titles.extend(
+                page["rows"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row["values"]["title"].clone()),
+            );
+            after = page["next"].as_str().map(str::to_owned);
+            if after.is_none() {
+                break;
+            }
+        }
+        assert_eq!(titles.len(), 12, "{label}：12 行要一行不少地翻完");
+        assert_eq!(titles[0], json!("第0"));
+        assert_eq!(titles[11], json!("第11"));
+    }
+}

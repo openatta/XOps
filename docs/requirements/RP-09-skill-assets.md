@@ -96,6 +96,13 @@
 resolve(skill, version) -> 内容 + 声明 + 归属 + 是否已发布
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.skill.*                创建 / 更新 · 发起测试执行 · 发布 / 停用 · 查询 · 声明归属 · 派生私有副本
+rust:xops-skill#*                   resolve(skill, version) -> 内容 + 声明 + 归属 + 是否已发布
+```
+
 ## 验收标准
 
 - **上传不执行**：创建一个技能**不产生任何执行**（枚举代码路径，创建路径上没有任何提交执行的调用）。

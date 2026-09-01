@@ -134,6 +134,14 @@ assemble(task, event) -> 派工单（不可变）
 submit(派工单)        -> 执行标识   —— 经 RP-07 的执行契约
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.trigger.*              手动触发（非阻塞，返回执行标识）
+api:mcp.tool.run.*                  查询执行状态 · 取消执行
+rust:xops-dispatch#*                dispatch(event) · assemble(task, event) · submit(派工单)
+```
+
 ## 验收标准
 
 - **事件白名单恰好五类**：尝试订阅"某张表被写入"，**创建时被拒绝**；枚举分发层，**没有第六种事件源**。

@@ -100,6 +100,16 @@ land(execution_result) -> 写入结果 | 两层拒绝之一
 cleanup()              -> 整批按时间清理，带豁免判定
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.run.*                  查询执行历史（含 `_runs.output` 与 `_runs.trace` 两列）
+                                    保留期的**配置** tool 归 RP-10（它是任务定义的一部分）
+rust:xops-task#land  #cleanup       写入路径与整批清理（**crate 与 RP-10 共用，元素不共用**）
+sql:table._runs.column.retainUntil  两个保留期列位
+sql:table._runs.column.traceRetainUntil
+```
+
 ## 验收标准
 
 - **写入顺序**：`_runs` 行**先于**产出行可见落定（`CON-011`）。构造一次两步之间的崩溃：**留下"`_runs` 行完整、产出行缺失"是可接受的**；**反过来必须不可能出现**。

@@ -122,6 +122,18 @@ poll_approval
 
 **另有登记 tools**：登记"本项目对应哪个仓" · 登记 "policyId → 哪条流程 + 结果列映射"。
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.xforge.submit-approval-request
+api:mcp.tool.xforge.poll-approval
+                                    ⚠️ **形状由 XForge 定死，XOps 没有设计自由度**（XFG-010）。
+                                    这两条元素的正文照抄 XForge 的定义，**任何"优化"都是破坏性变更**，
+                                    要走 DECISIONS.yaml
+api:mcp.tool.xforge.register.*      登记本项目对应哪个仓 · policyId → 流程 + 结果列映射
+rust:xops-xforge#*
+```
+
 ## 验收标准
 
 - **`xforge approve --provider xops` 真实跑通**（端到端，不是 mock）。

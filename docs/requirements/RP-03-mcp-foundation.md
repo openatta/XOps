@@ -107,6 +107,18 @@ registry.register(tool) —— 注册时必须交出：
 —— 交不出这几样的 tool 注册不进来。这是纪律的落点，不是文档里的一句话
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.registry.*                  tool 注册接口面（MCP-012）：schema · 角色 · 幂等 · 留痕
+api:mcp.error.*                     统一错误契约（MCP-007）；**无权限与不存在是同一条**（MCP-008）
+api:mcp.tool.identity.*             查询当前身份 · 能力发现 · 我待处理的流程节点（实现在 RP-14）
+rust:xops-mcp#*
+```
+
+> **窄接口纪律（MCP-004）在契约层的兑现**：注册进来的每一个 tool 都要有一份固定形状的
+> 输入 schema 落在 `contracts/api/mcp/*.json`。交不出 schema 的 tool 登记不进基线。
+
 ## 验收标准
 
 - **未声明字段**：请求里多带一个 schema 里没有的字段，**被拒绝**，不是被静默丢弃。

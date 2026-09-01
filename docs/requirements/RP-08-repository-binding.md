@@ -88,6 +88,14 @@ prepare_workspace(project, revision) -> 一份只读工作区
     —— 凭据在这一侧用掉，**不随工作区进容器**
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.repo.*                 绑定（含只读凭据验证）· 查询绑定与同步状态 · 轮换 · 解绑
+rust:xops-repo#*                    prepare_workspace(project, revision) -> 只读工作区
+                                    ⚠️ 凭据在这一侧用掉，**不随工作区进容器**
+```
+
 ## 验收标准
 
 - **绑定一个有写权限的凭据：被拒绝。** 这条要实际验证（尝试一次写并期待它失败），不是读凭据的声明。

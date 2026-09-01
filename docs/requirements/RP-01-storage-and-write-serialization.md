@@ -94,6 +94,17 @@ SerialWrite    在某张表上执行一次写，四步在同一区间内完成
 LockOrder      按表名全序获取一组表的锁，可重入
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+rust:xops-core#*                    类型 · ID · 时间 · 错误 · 事件形状 · 角色判定纯函数
+rust:xops-store#*                   存储契约（只基本 CRUD）—— CON-012 的硬验收就落在这几条上
+rust:xops-store#WriteEngine         四步写串行区间；①③ 的注入位与锁外出口一并登记，留 no-op 也要记
+sql:table.kv*                       物理 schema —— **只有一张键值表**，业务表是键的前缀
+sql:layout.*                        键编码与两个水位（event-key · row-key · watermark）
+                                    （五张系统表**自己的列**归它们的主包，见 data.md）
+```
+
 ## 验收标准
 
 - **换实现验收（本包的核心验收，`CON-012` + G12）**：把存储从 SQLite 换成内存实现，**写入路径与它上面的一切不改一行**，全部测试照过。

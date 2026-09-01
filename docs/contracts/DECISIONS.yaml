@@ -1,0 +1,24 @@
+# 破坏性契约变更的具名人拍板台账。
+#
+# 字段名与 XForge 的 evidence/conditions/contractDecisions.yaml 完全一致，
+# 接进去时是改路径不是改内容。四个字段是硬编码的，没有别名：
+#   question / decision / decidedBy / decidedAt
+#
+# decidedBy 写 Git author（xbitsmaster），decidedAt 用 ISO 8601。
+# 一开始就写真实身份：将来接 XForge 时它要与从提交历史建起来的比对集合对得上，
+# 事后改，改的是一条已经被引用过的决策。见 README §7。
+#
+# entries: [] 是一条断言——"本仓当前没有待拍板的破坏性契约变更"，不是空文件。
+condition: contractDecisions
+entries: []
+
+# 填一条长这样（把 entries: [] 换成 entries: 再往下缩进）：
+#
+# entries:
+#   - id: cbc-runs-trace-column
+#     question: 删掉 _runs.trace 会打断哪些消费者？是否走 expand-contract？
+#     decision: >-
+#       走 expand-contract：本次只做 expand（新列双写），
+#       删除放到下一次变更，中间保留一个发布周期。
+#     decidedBy: xbitsmaster
+#     decidedAt: 2026-09-01T10:00:00Z

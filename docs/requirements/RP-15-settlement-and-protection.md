@@ -128,6 +128,16 @@
 向 RP-14 的状态机发起迁移 —— settle / reject
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.flow.settle            为某实例的某节点写入一行 —— **"人做决定"的那条路**
+rust:xops-settle#*                  注入给 RP-01 区间 ③ 的求值回调
+```
+
+> **RP-15 不登记任何 `rust:xops-flow#*` 元素。** 它经 RP-14 的状态机接口驱动迁移，
+> 不得自己改 `_flows` / `_flow_nodes` ——这条分工在契约层是可查的，不靠记性。
+
 ## 验收标准
 
 **七条判定逐条构造，一条都不能只看代码：**

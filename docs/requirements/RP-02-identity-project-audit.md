@@ -128,6 +128,17 @@ can(actor, project, action) -> bool           —— 纯函数，无 I/O
 audit.append(event)         -> ()             —— 与业务写同一原子边界
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.project.*              创建 · 查询 · 加成员 / 改角色 / 移除 · 归档
+api:mcp.tool.token.*                令牌签发与撤销
+api:mcp.tool.audit.*                查询项目事件流 · 查询某对象完整历史
+                                    （**注册位在 RP-03，语义在本包**——元素归本包）
+rust:xops-identity#*                resolve(token) · can(actor, project, action)
+rust:xops-audit#*                   append(event)，与业务写同一原子边界
+```
+
 ## 验收标准
 
 - **令牌是唯一身份来源**：请求体里放 `actor` / `user` / `author`，一律被**静默忽略**，写入的行仍归属令牌持有人。

@@ -99,6 +99,18 @@ schema 校验回调  —— 注入给 RP-01 四步区间的 ①
 自动补列的写入点 —— 给 RP-12（retainUntil）、RP-15（_instance）
 ```
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.table.*                建表 · 加列 · 查询表结构 · 列出 · 删表 · 查询单行完整历史
+api:mcp.dispatch.table-tools.*      **表专属读写 tool 的派发规则与固定信封**（MCP-005）
+                                    ⚠️ 逐表实例（`bugs_insert` 这种）**不登记** —— 治理生成器，不治理实例
+rust:xops-table#*                   schema 校验回调 · 行的读接口 · 自动补列的写入点
+sql:meta.column-type.*              11 种列类型 → 物理映射（TBL-018 那一组，**没有 json**）
+sql:meta.auto-column.*              TBL-014 的五个列位：writtenBy · at · revision · _instance · retainUntil
+sql:meta.projection.*               事件到当前视图的投影规则
+```
+
 ## 验收标准
 
 - **不存在通用写 tool**：枚举全部已派发的 tool，**每一个的输入 schema 都是由某张表的 schema 生成的固定形状**；不存在 `{table, values}` 形状的写 tool。

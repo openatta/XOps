@@ -84,6 +84,17 @@ Git webhook 端点  只能产生一个 git 事件
 
 **非 MCP 端点**：Git webhook（POST）。**它只能产生一个 git 事件，不能创建或修改任何对象。**
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.schedule.*             配置定时调度 · 查询下次触发时间
+api:http.paths./webhooks/git.post   **唯一一条被允许存在于 `api:http.*` 里的写方向端点**
+                                    它只能产生一个 git 事件，不能创建或修改任何对象（TRG-011）。
+                                    ⚠️ 登记它的时候要在元素正文里写清这一句——审 api.md 的人
+                                    数"http 面有没有写路由"时，会数到它
+rust:xops-dispatch#*  rust:xops-web#*   只加两类事件源与一个端点，形状由 RP-11 / RP-05 留好
+```
+
 ## 验收标准
 
 - **定时**：配一个"每天 02:00（指定时区）"的任务，到点触发一次，且**触发记录能追溯到配置它的人**。

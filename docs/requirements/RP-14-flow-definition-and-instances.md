@@ -132,6 +132,16 @@ instance.reject(node)     -> 实例进拒绝终态，其余节点转"已作废"
 
 > **状态机操作在本包，判断"该不该调用它"在 RP-15。** 这条分工要写死——**RP-15 不得自己去改 `_flows` / `_flow_nodes`**。
 
+**契约元素**（基线在 [`../contracts/`](../contracts/README.md)，正文由本包自己的变更逐条添加）：
+
+```text
+api:mcp.tool.flow.*                 定义 / 发布 / 停用 · 列出 · 校验（不落库）· 发起实例 ·
+                                    查询实例状态与卡在哪 · 取消实例
+rust:xops-flow#*                    definition · instance.activate · instance.settle · instance.reject
+                                    ⚠️ **本包与 RP-15 唯一的接缝**，WP-C 定型即入基线
+sql:table._flows.*  sql:table._flow_nodes.*   两张系统表自己的列
+```
+
 ## 验收标准
 
 - **结算表 = 主体表**：定义时就被**校验拒绝**。

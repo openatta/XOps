@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo", "crates/xops-skill"]
+members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo", "crates/xops-skill", "crates/xops-task"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,7 @@ xops-read = { path = "crates/xops-read" }
 xops-exec = { path = "crates/xops-exec" }
 xops-repo = { path = "crates/xops-repo" }
 xops-skill = { path = "crates/xops-skill" }
+xops-task = { path = "crates/xops-task" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # rusqlite 只允许出现在 xops-store 里。CON-012 的分界线就在这一行 ——

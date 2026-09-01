@@ -734,3 +734,56 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   这也是为什么"未测试不可发布"能在 RP-11 完成之前验收。
 - `derive_private` 是**一次拷贝而不是引用**（`SKL-010`）：改私有副本不影响公共的。
 - `mark_used_for_settlement` 留给 RP-15。
+
+### Element: rust:xops-task#Task
+- module: xops-task
+- consumers: [RP-11, RP-12, RP-13, RP-15, RP-16]
+- **平台只有这一种任务**（`TSK-001`）。质量监管、审批、CI 触发、代码走读四种常见用法
+  在平台看来完全一样——**平台不认识这四个词**，所以这个类型里没有"审批任务"那种东西。
+- `may_write` 是 `TSK-004` 的落点：**未声明的表写不了**。
+- `responds_to_triggers` 是 `TSK-009` 的落点：**停用的任务不响应任何触发，包括手动**。
+
+### Element: rust:xops-task#VersionPolicy
+- module: xops-task
+- consumers: [RP-11]
+- **默认钉死一个版本**（`TSK-002`）。跟随最新必须是明确选择——
+  技能作者一次发布会改变所有引用它的任务的行为。
+
+### Element: rust:xops-task#Overlap
+- module: xops-task
+- consumers: [RP-11, RP-13]
+- 三选一，**默认跳过**（`TSK-008`）。理由写在类型上：**定时任务最常见的故障是
+  执行变慢后堆积成雪崩**。
+
+### Element: rust:xops-task#OnComplete
+- module: xops-task
+- consumers: [RP-12, RP-16]
+- 空 / 一个插件入口 / 另一个任务（`TSK-010`）。
+- ⚠️ **深度硬限制 1**（`TSK-011`）：两个方向都挡——我挂的那个任务自己不能再挂，
+  我自己被别人挂着的话我也不能挂。**一层是"输出后处理"，两层就是任务编排 DAG**，
+  随之而来的是依赖解析、失败传播、循环检测及其可视化。
+
+### Element: rust:xops-task#TerminationStep
+- module: xops-task
+- consumers: [RP-11, RP-12]
+- **终止的时序是定死的**（`TSK-006`），超时与被取消走同一条路：
+  ① 中止模型调用与会话 → ② 收敛并移交已产生的行 → ③ **先落 `_runs`，再写产出行** → ④ 销毁。
+- 每一步都带着"为什么在这个位置"。③ 的理由最要紧：`FLW-026⑥` 要读 `_runs.status`
+  才知道产出行算不算结算。
+- ⚠️ **它不是跨表事务**（`CON-011`、D43）：两者之间崩溃是可接受的失败形态——
+  `_runs` 行完整、产出行可能缺失；**反过来是不可接受的**，顺序就是为了排除它。
+- **RP-12 实现写入路径时要照着这个顺序**，它不是建议。
+
+### Element: rust:xops-task#Tasks
+- module: xops-task
+- consumers: [RP-11, RP-13]
+- 建 / 改 / 启停 / 读 / 列 / 找订阅者 / 解出技能版本。
+- **每一条校验都在创建时挡住，不留到运行时**——运行时才发现"引用的是草稿技能"
+  或者"onComplete 套了两层"，那时候已经跑起来了。
+- `resolve_skill_version` 转手问 `Skills::runnable_for`，因而 `SKL-009`
+  （所有者退出项目即失效）在任务这一侧也成立。
+
+### Element: rust:xops-task#DEFAULT_TOKEN_BUDGET
+- module: xops-task
+- consumers: [RP-11]
+- 未声明时的单次 token 上限（`TSK-005`）。

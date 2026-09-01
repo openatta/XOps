@@ -1,0 +1,21 @@
+[package]
+name = "xops-task"
+description = "任务定义 · 执行策略 · onComplete · 写入路径与清理。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+xops-skill.workspace = true
+xops-table.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

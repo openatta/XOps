@@ -462,3 +462,11 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-table
 - consumers: [xopsd]
 - 表专属 tool 的派发源。**建表即派发、删表即停派**——每次被问的时候现算。
+
+### Element: rust:xops-mcp#ProjectHook
+- module: xops-mcp
+- consumers: [xopsd, RP-04]
+- 「项目建好之后接着做什么」。**平台建那四张系统表就挂在这里**（`TBL-005`）。
+- 它存在是因为依赖方向：`xops-mcp → xops-identity`，而"什么是表"在 `xops-table`，
+  后者在 `xops-mcp` 之上。让 `xops-identity` 反过来依赖它就成环了，所以留一个位，
+  由 `xopsd` 把 RP-04 接进来。

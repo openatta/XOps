@@ -25,4 +25,5 @@ pub use registry::{
 };
 pub use schema::{Field, FieldType, Schema};
 pub use server::{McpServer, PROTOCOL_VERSION};
-pub use tools::{Capabilities, MyPendingNodes, NoPendingNodes, PendingNodes, WhoAmI};
+pub use tools::identity::{Capabilities, MyPendingNodes, NoPendingNodes, PendingNodes, WhoAmI};
+pub use tools::project::{NoHook, ProjectHook};

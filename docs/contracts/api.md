@@ -194,3 +194,67 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - ⚠️ **它不是 `MCP-004` 的口子**：那一条禁的是"接受**任意**结构"，而这里的子字段逐个声明，
   渲染出的 JSON Schema 里嵌套对象一样带 `additionalProperties: false`。
   没有它，"建表时声明有哪些列"只能拆成几条平行的数组——那不会更窄，只会更容易对错位。
+
+### Element: api:mcp.tool.project.create
+- module: xops-mcp
+- consumers: [agent]
+- 建项目。**任何用户都可以建，无需申请或审批；创建者自动成为所有者**（`PRJ-001`）。
+- `Requirement::Platform`——建项目的时候还没有项目，没有项目内角色可判。
+- 建完之后 `ProjectHook` 接着把那四张系统表建起来（`TBL-005`）。
+
+### Element: api:mcp.tool.project.mine
+- module: xops-mcp
+- consumers: [agent]
+
+### Element: api:mcp.tool.project.describe
+- module: xops-mcp
+- consumers: [agent]
+- **非成员得到的与项目不存在完全一致**（`PRJ-008`）。
+
+### Element: api:mcp.tool.project.archive
+- module: xops-mcp
+- consumers: [agent]
+- 归档后转为只读。**归档项目里的写 tool 从能力发现里整批消失**——那是 `can_in` 的自然结果。
+
+### Element: api:mcp.tool.member.list
+- module: xops-mcp
+- consumers: [agent]
+
+### Element: api:mcp.tool.member.set
+- module: xops-mcp
+- consumers: [agent]
+- 加成员或改角色。**一个项目必须始终至少有一个所有者**（`PRJ-006`）——降级最后一个也算。
+
+### Element: api:mcp.tool.member.remove
+- module: xops-mcp
+- consumers: [agent]
+
+### Element: api:mcp.tool.token.issue
+- module: xops-mcp
+- consumers: [agent]
+- **原文只在这一次的响应里出现**（`TOK-002`、`I-A`）。
+- ⚠️ **刻意不支持幂等键**，理由写在声明里：重复签发就该是两个令牌，而"返回与首次相同的
+  结果"会把第一次的原文再吐一遍——那正好破掉 `TOK-002`。这是 `Idempotency::NotIdempotent`
+  那条路存在的原因：让"忘了做幂等"与"想清楚了不做"在代码里看起来不一样。
+
+### Element: api:mcp.tool.token.revoke
+- module: xops-mcp
+- consumers: [agent]
+- **立即生效，没有延迟窗口**（`TOK-003`）。
+
+### Element: api:mcp.tool.token.mine
+- module: xops-mcp
+- consumers: [agent]
+- **只有摘要与时间，没有原文。**
+
+### Element: api:mcp.tool.audit.query
+- module: xops-mcp
+- consumers: [agent]
+- 按类型与时间范围查项目事件流（`AUD-008`）。
+- `InProject(ReadProject)` 是 `AUD-003` 在协议层的那一半：**不是成员的话，
+  连这次调用都到不了查询**——可见性在扫描之前就成立，不是查完再筛。
+
+### Element: api:mcp.tool.audit.history
+- module: xops-mcp
+- consumers: [agent]
+- 某个对象的完整历史。

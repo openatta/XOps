@@ -172,3 +172,14 @@ impl Tool for MyPendingNodes {
         Ok(json!({"nodes": self.source.pending_for(context.identity.user.id)?}))
     }
 }
+
+/// 注册身份域的三个 tool。
+///
+/// # Errors
+/// 声明不合形状或重名。
+pub fn register_identity(registry: &mut crate::Registry, directory: &Arc<Directory>) -> Result<()> {
+    registry.register(Arc::new(WhoAmI::new()?))?;
+    registry.register(Arc::new(Capabilities::new(Arc::clone(directory))?))?;
+    registry.register(Arc::new(MyPendingNodes::new(Arc::new(NoPendingNodes))?))?;
+    Ok(())
+}

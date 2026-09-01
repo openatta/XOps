@@ -325,6 +325,11 @@ fn 枚举全仓不存在任何向仓库写入的调用() {
             .map(|line| line.split("//").next().unwrap_or(""))
             .collect::<Vec<_>>()
             .join("\n");
+        // 只在**真的会跑 git 的文件**里找。别处出现 "push" 是 GitHub 的事件名，
+        // 不是一次推送 —— 早先这里没分清，webhook 那个模块一加进来就误报了。
+        if !code.contains("Command::new(\"git\")") {
+            return;
+        }
         for (needle, why) in [
             ("\"push\"", "推分支"),
             ("\"commit\"", "提交"),
@@ -343,6 +348,7 @@ fn 枚举全仓不存在任何向仓库写入的调用() {
             }
         }
     });
+
     assert!(
         offenders.is_empty(),
         "RPO-013 / I-G：XOps 在任何代码路径上都不持有、不请求仓库写权限。\n{offenders:#?}"

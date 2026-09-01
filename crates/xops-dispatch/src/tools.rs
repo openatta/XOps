@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use xops_core::{Id, Result};
+use xops_core::{Error, Id, Result};
 use xops_exec::{ExecContract, worksheet::RunId};
 use xops_identity::Action;
 use xops_mcp::registry::{CallContext, Idempotency, Registry, Requirement, Tool, ToolSpec};
@@ -237,3 +237,175 @@ pub fn register(
 /// 让 `Id` 在文档链接里可见。
 #[allow(dead_code, reason = "文档链接用")]
 type _IdLink = Id;
+
+// ——————————————————————————————— 调度域（RP-13） ———————————————————————————————
+
+use crate::schedule::{Cadence, Schedule};
+
+/// 配置一个任务的定时调度（`TRG-009`）。
+pub struct ConfigureSchedule {
+    spec: ToolSpec,
+    tasks: Arc<Tasks>,
+    schedules: Arc<crate::schedule_store::Schedules>,
+}
+
+impl ConfigureSchedule {
+    /// # Errors
+    /// 声明不合形状。
+    pub fn new(
+        tasks: Arc<Tasks>,
+        schedules: Arc<crate::schedule_store::Schedules>,
+    ) -> Result<Self> {
+        Ok(Self {
+            spec: ToolSpec::builder("schedule.configure")
+                .summary("配置一个任务的定时调度。**时区必须明确**——「每天 02:00」不说时区等于没说")
+                .input(
+                    Schema::new()
+                        .field(project_field())
+                        .field(Field::required("task", FieldType::Id, "任务标识"))
+                        .field(Field::optional(
+                            "hour",
+                            FieldType::Integer,
+                            "每天几点（0–23）",
+                        ))
+                        .field(Field::optional(
+                            "minute",
+                            FieldType::Integer,
+                            "几分（0–59）",
+                        ))
+                        .field(Field::optional(
+                            "everyHours",
+                            FieldType::Integer,
+                            "每隔几小时（1–24）。与 hour/minute 二选一",
+                        ))
+                        .field(Field::required(
+                            "utcOffsetMinutes",
+                            FieldType::Integer,
+                            "时区相对 UTC 的偏移，分钟。东八区是 480",
+                        )),
+                )
+                .requires(Requirement::InProject(Action::WriteTask))
+                .idempotency(Idempotency::Keyed)
+                .audits(kinds::TRIGGER_ACCEPTED)
+                .build()?,
+            tasks,
+            schedules,
+        })
+    }
+}
+
+impl Tool for ConfigureSchedule {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    fn call(&self, context: &CallContext<'_>) -> Result<Value> {
+        let task = self.tasks.read(
+            context.identity.user.id,
+            TaskId::from_id(context.id("task")?),
+        )?;
+        let cadence = match (
+            context.arg("everyHours").and_then(Value::as_i64),
+            context.arg("hour").and_then(Value::as_i64),
+        ) {
+            (Some(hours), None) => Cadence::EveryHours {
+                hours: u8::try_from(hours).map_err(|_| Error::invalid("间隔不合法"))?,
+            },
+            (None, Some(hour)) => Cadence::Daily {
+                hour: u8::try_from(hour).map_err(|_| Error::invalid("钟点不合法"))?,
+                minute: context
+                    .arg("minute")
+                    .and_then(Value::as_i64)
+                    .map_or(Ok(0), |minute| {
+                        u8::try_from(minute).map_err(|_| Error::invalid("分钟不合法"))
+                    })?,
+            },
+            _ => {
+                return Err(Error::invalid("hour/minute 与 everyHours 二选一"));
+            }
+        };
+        let offset = context
+            .arg("utcOffsetMinutes")
+            .and_then(Value::as_i64)
+            .and_then(|offset| i16::try_from(offset).ok())
+            .ok_or_else(|| Error::invalid("时区偏移不合法"))?;
+        // TRG-009：触发者记为系统，但**必须能追溯到配置该调度的人**。
+        let schedule = Schedule::new(task.id, cadence, offset, context.identity.user.id)?;
+        self.schedules.put(&schedule)?;
+        Ok(json!({
+            "task": task.id.to_string(),
+            "configuredBy": context.identity.user.id.to_string(),
+        }))
+    }
+}
+
+/// 查下次触发时间（`TRG-009`）。
+pub struct NextFire {
+    spec: ToolSpec,
+    schedules: Arc<crate::schedule_store::Schedules>,
+    clock: Arc<dyn xops_core::Clock>,
+}
+
+impl NextFire {
+    /// # Errors
+    /// 声明不合形状。
+    pub fn new(
+        schedules: Arc<crate::schedule_store::Schedules>,
+        clock: Arc<dyn xops_core::Clock>,
+    ) -> Result<Self> {
+        Ok(Self {
+            spec: ToolSpec::builder("schedule.next")
+                .summary("查一个任务下次什么时候被触发")
+                .input(Schema::new().field(project_field()).field(Field::required(
+                    "task",
+                    FieldType::Id,
+                    "任务标识",
+                )))
+                .requires(Requirement::InProject(Action::ReadProject))
+                .idempotency(Idempotency::ReadOnly)
+                .audits(kinds::TRIGGER_ACCEPTED)
+                .build()?,
+            schedules,
+            clock,
+        })
+    }
+}
+
+impl Tool for NextFire {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    fn call(&self, context: &CallContext<'_>) -> Result<Value> {
+        let task = TaskId::from_id(context.id("task")?);
+        let Some(schedule) = self.schedules.get(task)? else {
+            return Ok(json!({"scheduled": false}));
+        };
+        Ok(json!({
+            "scheduled": true,
+            "next": schedule.next_after(self.clock.now()).as_millis(),
+            "configuredBy": schedule.configured_by.to_string(),
+        }))
+    }
+}
+
+/// 注册调度域。
+///
+/// # Errors
+/// 声明不合形状或重名。
+pub fn register_schedules(
+    registry: &mut Registry,
+    tasks: &Arc<Tasks>,
+    schedules: &Arc<crate::schedule_store::Schedules>,
+    clock: &Arc<dyn xops_core::Clock>,
+) -> Result<()> {
+    registry.register(Arc::new(ConfigureSchedule::new(
+        Arc::clone(tasks),
+        Arc::clone(schedules),
+    )?))?;
+    registry.register(Arc::new(NextFire::new(
+        Arc::clone(schedules),
+        Arc::clone(clock),
+    )?))?;
+    Ok(())
+}

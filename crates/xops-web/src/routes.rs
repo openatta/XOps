@@ -18,6 +18,9 @@ pub enum Kind {
     Credential,
     /// 静态资源。
     Asset,
+    /// **Git webhook 端点**：`MCP-013` 认下的四个例外之一（`TRG-011`）。
+    /// 它只能做一件事——产生一个 git 事件，**不能创建或修改任何对象**。
+    Webhook,
 }
 
 /// 一条路由。
@@ -33,7 +36,7 @@ pub struct Route {
 }
 
 /// 全部路由。**多一条写路由都不行。**
-pub const ROUTES: [Route; 9] = [
+pub const ROUTES: [Route; 10] = [
     Route {
         method: "GET",
         path: "/api/me",
@@ -97,6 +100,13 @@ pub const ROUTES: [Route; 9] = [
         writes_business_objects: false,
         summary: "注销。同上",
     },
+    Route {
+        method: "POST",
+        path: "/webhooks/git",
+        kind: Kind::Webhook,
+        writes_business_objects: false,
+        summary: "Git webhook。**只能产生一个 git 事件**——验签、按投递标识幂等、                  立刻返回，端点内不做任何拉取或执行（TRG-011～TRG-014）",
+    },
 ];
 
 /// 把请求路径按 `/` 切成段。
@@ -148,18 +158,22 @@ mod tests {
     }
 
     #[test]
-    fn 非get的路由只有凭据面那两条() {
+    fn 非get的路由只有凭据面与webhook() {
         let non_read: Vec<&str> = ROUTES
             .iter()
             .filter(|route| route.method != "GET")
             .map(|route| route.path)
             .collect();
-        assert_eq!(non_read, vec!["/session", "/session"]);
+        assert_eq!(non_read, vec!["/session", "/session", "/webhooks/git"]);
+        // 三条都是 MCP-013 认下的例外，**没有一条写业务对象**。
         assert!(
             ROUTES
                 .iter()
                 .filter(|route| route.method != "GET")
-                .all(|route| route.kind == Kind::Credential)
+                .all(
+                    |route| matches!(route.kind, Kind::Credential | Kind::Webhook)
+                        && !route.writes_business_objects
+                )
         );
     }
 

@@ -112,6 +112,7 @@ impl Fixture {
             method: "GET".into(),
             path: path.into(),
             session: session.map(str::to_owned),
+            headers: std::collections::BTreeMap::new(),
             body: Vec::new(),
         })
     }
@@ -169,9 +170,15 @@ fn 枚举路由表证明不存在写路由() {
             route.method, route.path
         );
     }
+    // 非 GET 的只能是 `MCP-013` 认下的那几个例外：凭据面与 webhook。
     let writes: Vec<&str> = xops_web::ROUTES
         .iter()
-        .filter(|route| route.kind != xops_web::Kind::Credential && route.method != "GET")
+        .filter(|route| {
+            !matches!(
+                route.kind,
+                xops_web::Kind::Credential | xops_web::Kind::Webhook
+            ) && route.method != "GET"
+        })
         .map(|route| route.path)
         .collect();
     assert!(writes.is_empty(), "只读面上出现了非 GET 路由：{writes:?}");
@@ -193,6 +200,7 @@ fn 带着会话去写也没有地方可发() {
                 method: method.into(),
                 path,
                 session: Some(session.clone()),
+                headers: std::collections::BTreeMap::new(),
                 body: b"{}".to_vec(),
             });
             assert_eq!(response.status, 404, "{label}：{method} 不该有地方可发");
@@ -511,6 +519,7 @@ fn 会话面只建会话不写业务对象() {
             method: "DELETE".into(),
             path: "/session".into(),
             session: Some(session.clone()),
+            headers: std::collections::BTreeMap::new(),
             body: Vec::new(),
         });
         assert_eq!(response.status, 200, "{label}");
@@ -568,5 +577,132 @@ fn 会话cookie不让脚本读到() {
             format!("Set-Cookie: xops_session={session}; HttpOnly; SameSite=Strict; Path=/");
         assert!(rendered.contains("HttpOnly"), "{label}");
         assert!(rendered.contains("SameSite=Strict"), "{label}");
+    }
+}
+
+// ——————————————————————————————— webhook 端点（RP-13） ———————————————————————————————
+
+/// 一个只会数自己被调过几次的落点。
+struct CountingSink {
+    calls: std::sync::atomic::AtomicUsize,
+    accept: bool,
+}
+
+impl xops_web::WebhookSink for CountingSink {
+    fn deliver(
+        &self,
+        _signature: Option<&str>,
+        _event: Option<&str>,
+        _delivery: Option<&str>,
+        _body: &[u8],
+    ) -> xops_core::Result<()> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.accept {
+            Ok(())
+        } else {
+            Err(<CountingSink as xops_web::WebhookSink>::rejection())
+        }
+    }
+}
+
+fn webhook_request(body: &str) -> Request {
+    let mut headers = std::collections::BTreeMap::new();
+    headers.insert(
+        "x-hub-signature-256".to_owned(),
+        "sha256=deadbeef".to_owned(),
+    );
+    headers.insert("x-github-event".to_owned(), "push".to_owned());
+    headers.insert("x-github-delivery".to_owned(), "delivery-1".to_owned());
+    Request {
+        method: "POST".into(),
+        path: "/webhooks/git".into(),
+        session: None,
+        headers,
+        body: body.as_bytes().to_vec(),
+    }
+}
+
+#[test]
+fn webhook端点不写任何业务对象() {
+    let route = xops_web::ROUTES
+        .iter()
+        .find(|route| route.path == "/webhooks/git")
+        .expect("该有这条路由");
+    assert!(
+        !route.writes_business_objects,
+        "TRG-011：它只能产生一个 git 事件"
+    );
+    assert_eq!(route.kind, xops_web::Kind::Webhook);
+}
+
+#[test]
+fn 验签失败与没接落点回的是同一个东西() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        // ① 根本没接落点。
+        let unwired = fixture.web.handle(&webhook_request("{}"));
+        // ② 接了，但验签失败。
+        let rejecting = Arc::new(CountingSink {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            accept: false,
+        });
+        let wired = Arc::new(
+            WebServer::new(
+                Arc::clone(&fixture.model),
+                Arc::clone(&fixture.directory),
+                Arc::clone(&fixture.sessions),
+                Assets::none(),
+            )
+            .with_webhooks(Arc::clone(&rejecting) as Arc<dyn xops_web::WebhookSink>),
+        );
+        let rejected = wired.handle(&webhook_request("{}"));
+
+        assert_eq!(unwired.status, rejected.status, "{label}");
+        assert_eq!(
+            unwired.body, rejected.body,
+            "{label}：TRG-012 —— 不泄露任何关于任务或项目是否存在的信息"
+        );
+    }
+}
+
+#[test]
+fn webhook收下之后立刻返回() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let sink = Arc::new(CountingSink {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            accept: true,
+        });
+        let server = Arc::new(
+            WebServer::new(
+                Arc::clone(&fixture.model),
+                Arc::clone(&fixture.directory),
+                Arc::clone(&fixture.sessions),
+                Assets::none(),
+            )
+            .with_webhooks(Arc::clone(&sink) as Arc<dyn xops_web::WebhookSink>),
+        );
+        let started = std::time::Instant::now();
+        let response = server.handle(&webhook_request(r#"{"ref":"refs/heads/main"}"#));
+        assert_eq!(response.status, 202, "{label}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(100),
+            "{label}：TRG-014 —— 端点内不做任何拉取或执行"
+        );
+        assert_eq!(
+            sink.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn webhook端点不认会话也不给别的方法() {
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let mut get = webhook_request("{}");
+        get.method = "GET".into();
+        assert_ne!(fixture.web.handle(&get).status, 202, "{label}：只认 POST");
     }
 }

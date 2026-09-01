@@ -12,9 +12,15 @@
 
 pub mod dispatch;
 pub mod event;
+pub mod schedule;
+pub mod schedule_store;
 pub mod tools;
+pub mod webhook;
 pub mod worksheet;
 
 pub use dispatch::{Dispatcher, Outcome, TriggerRecord, WorkspaceSource};
 pub use event::{Event, EventKind, Trigger};
+pub use schedule::{Cadence, Schedule};
+pub use schedule_store::Schedules;
+pub use webhook::{Filter, GitEvent};
 pub use worksheet::{assemble, looks_like_credential, provenance};

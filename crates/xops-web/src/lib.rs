@@ -13,5 +13,5 @@ pub mod session;
 
 pub use assets::Assets;
 pub use routes::{Kind, ROUTES, Route, match_route};
-pub use server::{Request, Response, WebServer, listen};
+pub use server::{Request, Response, WebServer, WebhookSink, listen};
 pub use session::{SESSION_PREFIX, Sessions};

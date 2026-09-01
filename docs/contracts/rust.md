@@ -514,10 +514,10 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-web
 - consumers: [RP-06, RP-13]
 - **路由是一张可枚举的常量表，不是散在代码里的一堆 match 分支。**
-- `BRD-005` 第 ① 道"后端不存在写路由"是**结构性**的，而 RP-05 的验收要求
-  "用路由表枚举来证明，不是靠代码审查"——所以路由先是数据，再是行为。
-- ⚠️ **RP-13 往这里加 webhook 端点时，要同时把它标成 `Kind::Credential` 之外的
-  那一类并说清它只能做的那一件事**，否则这张表就不再是一份证明了。
+- 本次加了 `POST /webhooks/git`，`Kind::Webhook`。**非 GET 的路由现在恰好三条**：
+  两条凭据面 + 一条 webhook，**全部 `writes_business_objects: false`**——
+  它们就是 `MCP-013` 认下的那几个例外，而这张表是它们的清单。
+- ⚠️ 再往这张表里加非 GET 路由，先回去读 `MCP-013`：**例外只有四个**。
 
 ### Element: rust:xops-web#Sessions
 - module: xops-web
@@ -907,3 +907,42 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [RP-12]
 - 查表结构，**不判权**。给平台自己的写入路径用——那条路上没有"调用者"这个概念，
   写入者是一次执行，不是一个人。
+
+### Element: rust:xops-dispatch#Schedule
+- module: xops-dispatch
+- consumers: [xopsd]
+- 两类表达就够了（`TRG-009`）：**每天某时** 与 **每隔 N 小时**，都带明确的时区——
+  「每天 02:00」不说时区等于没说。
+- `configured_by`：**触发者记为系统，但必须能追溯到配置该调度的人**。
+- `missed_windows` 数得出错过了几个窗口。**它们不补跑**（`TRG-010`）：
+  补跑会在恢复瞬间产生一批并发执行，风险大于收益。**但要留痕**——
+  静默跳过与"它本来就没到点"在外面看起来一模一样。
+
+### Element: rust:xops-dispatch#Schedules
+- module: xops-dispatch
+- consumers: [xopsd]
+- 调度表。`due()` 顺带把错过的窗口逐个留痕。
+
+### Element: rust:xops-dispatch#GitEvent
+- module: xops-dispatch
+- consumers: [xops-web, xopsd]
+- 从 webhook 载荷里提取出来的**只有四样**：确切提交标识 · 分支 · 事件类型 · 投递标识。
+- ⚠️ `TRG-015`：载荷是**不可信输入**（G7）。`extract` **只读那几个已知的键**——
+  提交信息、PR 描述里的任何自由文本都不进它的输出，因而也进不了任何控制流。
+  有测试往载荷里塞攻击性文本，验证它一个字都没出来。
+- **缺了必需字段就报错，不猜、不兜底**：猜错一次，执行读的就是错的那一版代码。
+- `revision` **覆盖任务定义里写死的目标修订**（`TRG-017`）。
+
+### Element: rust:xops-dispatch#Filter
+- module: xops-dispatch
+- consumers: [xopsd]
+- 按分支与事件类型过滤（`TRG-015`）。
+
+### Element: rust:xops-web#WebhookSink
+- module: xops-web
+- consumers: [xopsd]
+- Git webhook 的落点。**它被放在 web 这一侧而不是直接依赖 dispatch**，
+  是因为 `TRG-014`：端点内不做任何拉取或执行，这个 trait 的实现要在毫秒内返回——
+  平台的 webhook 都有超时并会因超时重投，从而放大问题。
+- `rejection()` 是验签失败时**唯一**该返回的错误。**端点回的东西必须与"没接落点"
+  一模一样**（`TRG-012`）——否则它就成了探测器。有测试逐字节比这两种响应。

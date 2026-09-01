@@ -22,6 +22,36 @@ use crate::assets::Assets;
 use crate::routes::{Kind, match_route};
 use crate::session::Sessions;
 
+/// Git webhook 的落点。**RP-13 填它**（在 `xopsd` 里接上 dispatcher）。
+///
+/// 它被放在这里而不是直接依赖 dispatch，是因为 `TRG-014`：
+/// **端点内不做任何拉取或执行**。这个 trait 的实现要在毫秒内返回——
+/// 平台的 webhook 都有超时并会因超时重投，从而放大问题。
+pub trait WebhookSink: Send + Sync + 'static {
+    /// 验签失败时该返回的那个错误。**用它，别自己造一个**——
+    /// 端点回的东西必须与"没接落点"一模一样（`TRG-012`）。
+    #[must_use]
+    fn rejection() -> Error
+    where
+        Self: Sized,
+    {
+        Error::not_found("不存在")
+    }
+
+    /// 收下一次投递。
+    ///
+    /// # Errors
+    /// 验签失败或载荷不合形状。**错误一律映射成"不存在"**（`TRG-012`）——
+    /// 端点不能成为探测器。
+    fn deliver(
+        &self,
+        signature: Option<&str>,
+        event: Option<&str>,
+        delivery: Option<&str>,
+        body: &[u8],
+    ) -> Result<()>;
+}
+
 const MAX_BODY: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 
@@ -31,6 +61,7 @@ pub struct WebServer {
     directory: Arc<Directory>,
     sessions: Arc<Sessions>,
     assets: Assets,
+    webhooks: Option<Arc<dyn WebhookSink>>,
 }
 
 impl std::fmt::Debug for WebServer {
@@ -45,6 +76,8 @@ pub struct Request {
     pub method: String,
     pub path: String,
     pub session: Option<String>,
+    /// 小写化的请求头。webhook 验签要用（`TRG-012`）。
+    pub headers: std::collections::BTreeMap<String, String>,
     pub body: Vec<u8>,
 }
 
@@ -86,7 +119,15 @@ impl WebServer {
             directory,
             sessions,
             assets,
+            webhooks: None,
         }
+    }
+
+    /// 接上 webhook 落点。RP-13 用。
+    #[must_use]
+    pub fn with_webhooks(mut self, sink: Arc<dyn WebhookSink>) -> Self {
+        self.webhooks = Some(sink);
+        self
     }
 
     /// 处理一次请求。**没有传输，因而整段可以直接测。**
@@ -113,6 +154,9 @@ impl WebServer {
         };
         if route.kind == Kind::Credential {
             return self.session_face(request);
+        }
+        if route.kind == Kind::Webhook {
+            return Ok(self.webhook(request));
         }
         debug_assert_eq!(route.kind, Kind::Read);
 
@@ -173,6 +217,28 @@ impl WebServer {
             200,
             &value.map_err(|error| Error::internal(format!("装不下：{error}")))?,
         ))
+    }
+
+    /// Git webhook。**端点内不做任何拉取或执行**（`TRG-014`）——
+    /// 收下、验签、交给分发层入队，立刻返回。
+    ///
+    /// 验签失败与"没接落点"返回的东西**一模一样**（`TRG-012`）：
+    /// 不泄露任何关于任务或项目是否存在的信息。
+    fn webhook(&self, request: &Request) -> Response {
+        let headers = &request.headers;
+        let delivered = self.webhooks.as_ref().map(|sink| {
+            sink.deliver(
+                headers.get("x-hub-signature-256").map(String::as_str),
+                headers.get("x-github-event").map(String::as_str),
+                headers.get("x-github-delivery").map(String::as_str),
+                &request.body,
+            )
+        });
+        match delivered {
+            Some(Ok(())) => Response::json(202, &json!({"accepted": true})),
+            // 验签失败、载荷不合形状、根本没接落点 —— 三种回同一个东西。
+            _ => Response::problem(404, "不存在"),
+        }
     }
 
     /// 凭据面：登录与注销。**`MCP-013` 认下的例外之一，不写任何业务对象。**
@@ -292,11 +358,13 @@ fn read_request(stream: &mut TcpStream) -> std::result::Result<Request, Response
 
     let mut length = 0usize;
     let mut session = None;
+    let mut headers = std::collections::BTreeMap::new();
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
         let value = value.trim();
+        headers.insert(name.trim().to_ascii_lowercase(), value.to_owned());
         match name.trim().to_ascii_lowercase().as_str() {
             "content-length" => length = value.parse().unwrap_or(0),
             "authorization" => {
@@ -323,6 +391,7 @@ fn read_request(stream: &mut TcpStream) -> std::result::Result<Request, Response
         method,
         path,
         session,
+        headers,
         body,
     })
 }
@@ -330,6 +399,7 @@ fn read_request(stream: &mut TcpStream) -> std::result::Result<Request, Response
 fn render(response: &Response) -> Vec<u8> {
     let reason = match response.status {
         200 => "OK",
+        202 => "Accepted",
         400 => "Bad Request",
         401 => "Unauthorized",
         404 => "Not Found",

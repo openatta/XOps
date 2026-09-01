@@ -681,6 +681,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "xops-settle"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xops-audit",
+ "xops-core",
+ "xops-flow",
+ "xops-identity",
+ "xops-mcp",
+ "xops-store",
+ "xops-table",
+ "xops-task",
+]
+
+[[package]]
 name = "xops-skill"
 version = "0.1.0"
 dependencies = [

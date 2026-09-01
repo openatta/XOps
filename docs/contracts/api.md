@@ -355,3 +355,11 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
   挡住图表库、`<canvas>` 与 chart 字样。
 - 判断标准很直白：**如果有一天需要在平台代码里写"什么是缺陷密度"，那就越界了**——
   而它最先会以一个图表库的 import 出现。
+
+### Element: api:mcp.tool.flow.settle
+- module: xops-settle
+- consumers: [agent]
+- **为某实例的某节点写入一行**——`FLW-022` 里 `_instance` 三种填法的第一种：
+  实例标识作为参数，**平台代填**。
+- 参数里自己带 `_instance` 会被拒。
+- 它在 RP-15 而不是 RP-14，**因为它是"人做决定"的那条路**——要判允许写入者与职责分离。

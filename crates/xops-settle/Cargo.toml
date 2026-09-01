@@ -1,0 +1,22 @@
+[package]
+name = "xops-settle"
+description = "允许写入者 · _instance · 七条判定 · 求值链 · 状态列保护。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xops-core.workspace = true
+xops-store.workspace = true
+xops-audit.workspace = true
+xops-identity.workspace = true
+xops-mcp.workspace = true
+xops-table.workspace = true
+xops-task.workspace = true
+xops-flow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

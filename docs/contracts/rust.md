@@ -1010,3 +1010,47 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [RP-11, RP-15]
 - 「节点被激活」的载荷（`TRG-018`）：实例 · 流程与版本 · 哪个节点 · 发起者 ·
   主体标识与修订。
+
+### Element: rust:xops-settle#Rule
+- module: xops-settle
+- consumers: [RP-16, RP-17]
+- **七条判定，缺一不可**（`FLW-026`）。每一条带着 `why()`——**它挡的是什么**。
+  那几句话是这个类型存在的理由：删掉之后这七条就成了七个看不出所以然的 if。
+- ② 之所以在**写入这一刻**判：名单表可以随时改（`FLW-029`）。
+- ③ 挡的是**闭环自批**；写入者是任务时比**任务所有者**——任务不是责任主体，人才是（`I-O`）。
+- ⑥⑦ 挡的是**产出异常**：超时后的残片、读的是 HEAD 而不是这次要它看的那一版。
+
+### Element: rust:xops-settle#Verdict
+- module: xops-settle
+- consumers: [RP-16]
+- 三个结论。**「不结算」不是「拒绝」**：不结算时**行照常留在表里**（它是一条正常数据），
+  只是不算数（`FLW-027`）；拒绝则让整个实例立即进入终态。
+
+### Element: rust:xops-settle#WriterCheck
+- module: xops-settle
+- consumers: [xopsd]
+- 允许写入者三者并集的判定。**名单每次现查**——它可以随时改。
+
+### Element: rust:xops-settle#responsible
+- module: xops-settle
+- consumers: [RP-17]
+- 从 `writtenBy` 归出**那个人**。插件与平台写的行不是"谁的表态"，返回 `None`。
+
+### Element: rust:xops-settle#Origin
+- module: xops-settle
+- consumers: [RP-04, RP-16]
+- 谁在写。`may_write_status` / `may_write_instance` 两个判定，各挡一件事：
+  - `_instance`：**技能与用户都不能自己写**（`I-P`）。没有它，两个并发实例会在同一张表上
+    产生两条同样满足筛选的行，节点判定无从区分——**这是整个流程模型的地基**。
+  - 状态列：**只有平台与流转插件能写**（`FLW-036`）。不这么做，任何成员都能直接
+    `update status = closed` 绕过整条流程——**七条判定只管"这行算不算结算"，从不阻止写入**。
+
+### Element: rust:xops-settle#Evaluator
+- module: xops-settle
+- consumers: [xopsd, RP-16]
+- 求值链（`FLW-033`/`FLW-034`）。**整段发生在这张表的写入串行区间内**——
+  除了最后的"触发任务"那一步，它在锁外入队。
+- ⚠️ **`apply` 经 RP-14 的状态机接口驱动迁移**，本包**不碰 `_flows` / `_flow_nodes`**。
+  有测试扫源码来守这条——**它是那一刀能成立的全部前提**。
+- 指定了流转插件时，① 里的"满足筛选"由插件替代，**②～⑦ 一条不减，且先判完**——
+  不满足的行根本不会被交给插件（`FLW-028`）。

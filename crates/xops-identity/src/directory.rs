@@ -206,6 +206,30 @@ impl Directory {
     ///
     /// # Errors
     /// 用户不存在，或者底层写失败。
+    /// 引导:给一个内建账号签一把令牌，账号不在就先建。
+    ///
+    /// **第一把令牌只能这样来**——签令牌经 MCP 要先有令牌（`MCP-002`），
+    /// 于是第一把无处可来。
+    ///
+    /// ⚠️ **它绕过了自注册开关（`IDN-003`），这是有意的**:那条开关管的是
+    /// "陌生人登录能不能自动建号"，而这条路的调用方**已经能读写数据库了**——
+    /// 对他来说自注册开不开没有区别。把它做成一个网络接口才是错的:
+    /// 那会是一个免认证的、能签出任意权限凭据的入口。
+    ///
+    /// # Errors
+    /// 账号名不合法，或者底层写失败。
+    pub fn bootstrap_token(&self, account: &str) -> Result<TokenSecret> {
+        let external = ExternalAccount {
+            provider: crate::ProviderId::new("builtin")?,
+            account: account.to_owned(),
+        };
+        let user = match self.user_by_account(&external)? {
+            Some(user) => user,
+            None => self.provision(external, account, None)?,
+        };
+        Ok(self.issue_token(user.id, "引导", None)?.1)
+    }
+
     pub fn issue_token(
         &self,
         user: UserId,

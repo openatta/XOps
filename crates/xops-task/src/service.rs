@@ -143,6 +143,15 @@ impl Tasks {
     ///
     /// # Errors
     /// 看不到——**与不存在一致**。
+    /// 读一个任务，**不判权**。给平台自己的路径用——落账那条路上没有"调用者"，
+    /// 写入者是一次执行，不是一个人。
+    ///
+    /// # Errors
+    /// 没有这个任务。
+    pub fn read_internal(&self, task: TaskId) -> Result<Task> {
+        self.load(task)?.ok_or_else(|| Error::not_found("不存在"))
+    }
+
     pub fn read(&self, viewer: UserId, task: TaskId) -> Result<Task> {
         let record = self.load(task)?.ok_or_else(|| Error::not_found("不存在"))?;
         if self.directory.role_of(record.project, viewer)?.is_none() {

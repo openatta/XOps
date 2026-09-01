@@ -52,8 +52,32 @@ pub struct Assembled {
     pub unsatisfied: &'static [(&'static str, &'static str)],
     pub notices: Arc<Notices>,
     pub dispatcher: Arc<Dispatcher>,
+    /// 把跑完的执行落成账。**没有它 `_runs` 就是空的**——
+    /// 触发那条路是非阻塞的，执行跑完之后没有人在等着写账。
+    pub reaper: Arc<xops_dispatch::dispatch::Reaper>,
     /// 目录。**给引导用**——第一个用户与第一份令牌要从这里来。
     pub directory: Arc<Directory>,
+}
+
+/// 执行结束 → 一条通知（`NTF-007`）。
+///
+/// ⚠️ **通知的失败不回滚落账**:`Notices::notify` 交回的是一组痕迹，
+/// 不是一个能往上抛的错误（`NTF-008`）——这里因此只是把它丢掉，账已经落好了。
+struct RunNotices {
+    notices: Arc<Notices>,
+}
+
+impl xops_dispatch::dispatch::RunNotifier for RunNotices {
+    fn finished(&self, task: &xops_task::Task, run: &str, status: &str) {
+        let _ = self.notices.notify(&xops_notice::SourceEvent::RunFinished {
+            project: task.project,
+            run: run.to_owned(),
+            task: task.id.to_string(),
+            status: status.to_owned(),
+            owner: task.created_by,
+            after_failure: None,
+        });
+    }
 }
 
 /// 项目建好之后把那四张系统表建起来（`TBL-005`）。
@@ -167,6 +191,9 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         Arc::clone(&relations),
         Arc::clone(&clock),
     )?);
+    // ⚠️ 技能与「发起测试执行」互相要对方:`Skills` 要一条执行链才发得起测试执行，
+    // 而那条链要 `Skills` 去解出技能版本。先建 `Skills`，再把链接上去——
+    // 这是 `SKL-003` 那条门在装配层的形状。
     let skills = Arc::new(Skills::new(
         Arc::clone(&engine),
         Arc::clone(&store),
@@ -201,6 +228,22 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         )
         .with_subscription_check(Arc::clone(&whitelist) as Arc<dyn xops_task::SubscriptionCheck>),
     );
+    // 接上测试执行那条链（`SKL-003`）。**没有它技能发布不了**——
+    // 发布要一次成功的测试执行，而那次执行的入口在这里。
+    let skills = Arc::new(
+        Skills::new(
+            Arc::clone(&engine),
+            Arc::clone(&store),
+            Arc::clone(&audit),
+            Arc::clone(&directory),
+            Arc::clone(&clock),
+        )
+        .with_test_runner(Arc::new(xops_dispatch::dispatch::TestRuns::new(
+            Arc::clone(&exec),
+            Arc::clone(&clock),
+        ))),
+    );
+
     let dispatcher = Arc::new(Dispatcher::new(
         Arc::clone(&tasks),
         Arc::clone(&skills),
@@ -247,6 +290,26 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         Arc::clone(&directory),
         Arc::clone(&clock),
     )?);
+    // 落账那一环（`EXE-026`）。**执行跑完之后是它把 `_runs` 那一行写下来**——
+    // 触发那条路非阻塞（`EXE-021`），所以没有别人在等着做这件事。
+    let reaper = Arc::new(
+        xops_dispatch::dispatch::Reaper::new(
+            Arc::clone(&dispatcher),
+            Arc::clone(&tasks),
+            Arc::new(xops_task::landing::Landing::new(
+                Arc::clone(&tables),
+                Arc::clone(&clock),
+            )),
+            Arc::clone(&store),
+            Arc::clone(&exec),
+        )
+        // 执行结束通知任务所有者（`NTF-007`）。**没接就等于不通知**，
+        // 而"自动化失灵是静默的"正是这条要挡的。
+        .with_notices(Arc::new(RunNotices {
+            notices: Arc::clone(&notices),
+        })),
+    );
+
     let templates = Arc::new(Templates::new(
         Arc::clone(&tables),
         Arc::clone(&flows),
@@ -320,6 +383,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         unsatisfied: isolation.unsatisfied(),
         notices,
         dispatcher,
+        reaper,
         directory,
     })
 }
@@ -332,7 +396,18 @@ fn embedded_engine(config: &Config, key: &str) -> Result<Arc<dyn Engine>> {
     let auth = attacore_model::client::AuthMode::ApiKey(key.to_owned());
     let client = match &config.model_base_url {
         Some(base) => {
-            let url = base
+            // ⚠️ **末尾那个斜杠不是可有可无的。**
+            // 客户端拿 base 去 `Url::join("v1/messages")`，而 `join` 的语义是:
+            // base 不以 `/` 结尾时**最后一段会被替换掉**——
+            // `https://host/anthropic` 会变成 `https://host/v1/messages`，
+            // 路径前缀被悄悄丢掉，表现是一个查不出原因的 404。
+            // **实测撞的就是这个。**
+            let normalized = if base.ends_with('/') {
+                base.clone()
+            } else {
+                format!("{base}/")
+            };
+            let url = normalized
                 .parse()
                 .map_err(|error| Error::invalid(format!("模型地址不合法：{error}")))?;
             attacore_model::client::HttpAnthropicClient::with_base(auth, url)

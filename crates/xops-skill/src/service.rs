@@ -31,6 +31,40 @@ pub mod kinds {
     pub const SKILL_DERIVED: &str = "skill.derived";
 }
 
+/// 「发起一次测试执行」的注入位。**RP-11 填它。**
+///
+/// `SKL-003`:技能必须经过至少一次**成功的测试执行**才能发布，
+/// 而那次执行要**在与正式执行相同的隔离环境中进行**——本 crate 不认识执行，所以留一个位。
+///
+/// ⚠️ **没有它就等于技能发布不了**:发布要测试执行，测试执行没有入口，
+/// 整条技能生命周期在 MCP 面上是死锁的。**这个死锁真的发生过**——
+/// 第一次拿真模型跑端到端时撞上的。
+pub trait TestRunner: Send + Sync + 'static {
+    /// 跑一次，**跑完再回来**。
+    ///
+    /// 测试执行是作者手动发起、要当场看结果的，所以它与触发那条路不同——
+    /// `EXE-021` 的"提交即返回"管的是触发（`run.trigger`），不是这里。
+    ///
+    /// # Errors
+    /// 跑失败了，或者根本没跑起来。
+    fn run(
+        &self,
+        actor: UserId,
+        version: &Version,
+        inputs: &serde_json::Value,
+    ) -> Result<TestOutcome>;
+}
+
+/// 一次测试执行的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestOutcome {
+    pub run: String,
+    pub succeeded: bool,
+    /// 失败时它说得出为什么。
+    pub detail: String,
+    pub output: String,
+}
+
 /// 技能资产。
 pub struct Skills {
     engine: Arc<WriteEngine>,
@@ -38,6 +72,7 @@ pub struct Skills {
     audit: Arc<AuditLog>,
     directory: Arc<Directory>,
     clock: Arc<dyn Clock>,
+    tester: Option<Arc<dyn TestRunner>>,
 }
 
 impl std::fmt::Debug for Skills {
@@ -68,7 +103,47 @@ impl Skills {
             audit,
             directory,
             clock,
+            tester: None,
         }
+    }
+
+    /// 接上"发起测试执行"那条链（RP-11）。
+    ///
+    /// **没接就等于技能发布不了**——`skill.test` 会明确说出这件事，而不是假装成功。
+    #[must_use]
+    pub fn with_test_runner(mut self, tester: Arc<dyn TestRunner>) -> Self {
+        self.tester = Some(tester);
+        self
+    }
+
+    /// 跑一次测试执行；**成功了就把那个事实记下来**（`SKL-003`）。
+    ///
+    /// # Errors
+    /// 没权限 · 看不到 · 没有这个版本 · 没接测试执行链 · 跑失败了。
+    pub fn test_run(
+        &self,
+        actor: UserId,
+        skill: SkillId,
+        version: u32,
+        inputs: &serde_json::Value,
+    ) -> Result<TestOutcome> {
+        self.require_writable(actor, skill)?;
+        let record = self.version(skill, version)?;
+        // **输入先过技能自己的契约。** 让一次测试执行带着不合契约的输入跑起来，
+        // 等于把"这个版本测过了"这件事记在一次不算数的执行上。
+        record.declaration.check_arguments(inputs)?;
+        let tester = self.tester.as_ref().ok_or_else(|| {
+            Error::unavailable(
+                "这个部署没有接上执行链，测试执行发起不了——**因而技能也发布不了**（SKL-003）",
+            )
+        })?;
+        let outcome = tester.run(actor, &record, inputs)?;
+        if outcome.succeeded {
+            // 事实由本包持有，门也在本包（`SKL-003`）。
+            let run = Id::parse(&outcome.run).unwrap_or_else(|_| Id::generate());
+            self.record_successful_test(actor, skill, version, run)?;
+        }
+        Ok(outcome)
     }
 
     /// 建一个技能，连同它的第一个版本（草稿）。

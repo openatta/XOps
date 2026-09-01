@@ -34,7 +34,10 @@ cargo build --release
 export $(./target/release/xopsd --generate-key)
 
 export XOPS_DB=/var/lib/xops/xops.db
-./target/release/xopsd --check   # 装配一遍、打印横幅、不监听
+export XOPS_MODEL_KEY=sk-...     # 不给就跑桩引擎
+
+./target/release/xopsd --check              # 装配一遍、打印横幅、不监听
+TOKEN=$(./target/release/xopsd --issue-token alice)   # **第一把令牌只能这样来**
 ./target/release/xopsd
 ```
 
@@ -49,6 +52,10 @@ export XOPS_DB=/var/lib/xops/xops.db
 | `XOPS_MODEL` | 默认模型,默认 `claude-sonnet-4-6` |
 | `XOPS_MODEL_BASE_URL` | 模型服务地址(兼容 Anthropic Messages 的任何一个) |
 | `XOPS_LOG` | `off`/`error`/`warn`/`info`/`debug`,默认 `info` |
+
+**第一把令牌**:`xopsd --issue-token <账号>`。签令牌经 MCP 要先有令牌
+(`MCP-002`),所以第一把无处可来。**它是一条命令而不是一个接口**——
+开一个引导端点等于开一个免认证的、能签出任意权限凭据的网络入口。
 
 **存活探针**:`GET /healthz` → `{"status":"ok"}`。不认证、不查库、**不带任何信息**。
 

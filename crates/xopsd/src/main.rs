@@ -23,6 +23,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("--generate-key") => generate_key(),
         Some("--check") => run(true),
+        Some("--issue-token") => issue_token(args.get(1).map(String::as_str)),
         Some("--help" | "-h") => {
             println!("{}", help());
             ExitCode::SUCCESS
@@ -37,6 +38,10 @@ fn main() -> ExitCode {
 
 /// 停止 accept 之后，给在途请求多久收尾。
 const DRAIN: Duration = Duration::from_secs(3);
+/// 多久扫一遍"跑完但还没落账"的执行。
+///
+/// ⚠️ 它是**账变得可见的延迟上限**:执行结束到 `_runs` 出现那一行之间就是这么久。
+const REAP_EVERY: Duration = Duration::from_millis(500);
 
 fn help() -> &'static str {
     "xopsd —— XOps 服务端\n\
@@ -44,7 +49,10 @@ fn help() -> &'static str {
      用法：\n  \
        xopsd                 起两个服务面\n  \
        xopsd --check         装配一遍并打印横幅，不监听\n  \
-       xopsd --generate-key  生成一把加密密钥\n\
+       xopsd --generate-key  生成一把加密密钥\n  \
+       xopsd --issue-token <账号>\n        \
+                             给这个账号签一把 MCP 令牌（不在就先建）。\n        \
+                             **引导用**：第一把令牌只能这样来 —— 签令牌本身要令牌\n\
      \n\
      环境变量：\n  \
        XOPS_SECRET_KEY        **必填**，只读仓凭据与插件配置的加密密钥\n  \
@@ -57,6 +65,57 @@ fn help() -> &'static str {
        XOPS_MODEL             默认模型，默认 claude-sonnet-4-6\n  \
        XOPS_MODEL_BASE_URL    模型服务地址（兼容 Anthropic Messages 的任何一个）\n  \
        XOPS_LOG               off / error / warn / info / debug，默认 info\n"
+}
+
+/// 给一个账号签一把 MCP 令牌。**第一把令牌只能这样来。**
+///
+/// # 为什么它是一条命令，不是一个接口
+///
+/// 签令牌经 MCP 要先有令牌（`MCP-002`：**每次调用都要带令牌，握手也不例外**），
+/// 于是第一把无处可来。开一个"引导端点"是错的答案——**那是一个免认证的、
+/// 能签出任意权限凭据的网络入口**，它会一直在那里。
+///
+/// 这条命令的授权来自**能不能读到这个库文件**，而那正是该有的那一级:
+/// 能碰数据库的人本来就能拿到一切。
+///
+/// ⚠️ **令牌原文只在这里出现一次**（`TOK-002`：系统内任何持久化位置都不存在它）。
+/// 丢了就再签一把，找不回来。
+fn issue_token(account: Option<&str>) -> ExitCode {
+    let Some(account) = account.filter(|name| !name.trim().is_empty()) else {
+        eprintln!("要给哪个账号签？用法：xopsd --issue-token <账号>");
+        return ExitCode::FAILURE;
+    };
+    log::set_level(log::level_from_env());
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if config.in_memory() {
+        eprintln!("库是 :memory: —— 签出来的令牌随进程一起消失。设 XOPS_DB 再来一次。");
+        return ExitCode::FAILURE;
+    }
+    let assembled = match assemble(&config) {
+        Ok(assembled) => assembled,
+        Err(error) => {
+            eprintln!("装配失败：{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match assembled.directory.bootstrap_token(account) {
+        Ok(secret) => {
+            // ⚠️ 印到 stdout，横幅那些走 stderr —— 这样 `$(xopsd --issue-token me)`
+            // 拿到的就只有令牌本身。
+            println!("{}", secret.into_string());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("签不出来：{error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn generate_key() -> ExitCode {
@@ -138,6 +197,27 @@ fn run(check_only: bool) -> ExitCode {
         let stopping = Arc::clone(&stopping);
         thread::spawn(move || server.serve_listener_until(&web_listener, &stopping))
     };
+
+    // 落账循环。**执行跑完之后是它把 `_runs` 那一行写下来**——
+    // 触发那条路非阻塞（`EXE-021`），所以没有别人在等着做这件事。
+    {
+        let reaper = Arc::clone(&assembled.reaper);
+        let stopping = Arc::clone(&stopping);
+        thread::spawn(move || {
+            while !stopping.load(std::sync::atomic::Ordering::Relaxed) {
+                match reaper.sweep() {
+                    Ok(landed) if landed > 0 => {
+                        log::info("xopsd.landed", &[("runs", &landed.to_string())]);
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        log::error("xopsd.reaper", &[("error", &format!("{error}"))]);
+                    }
+                }
+                thread::sleep(REAP_EVERY);
+            }
+        });
+    }
 
     log::info(
         "xopsd.started",

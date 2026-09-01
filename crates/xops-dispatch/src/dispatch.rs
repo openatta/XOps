@@ -65,7 +65,7 @@ pub struct TriggerRecord {
 /// **RP-13 往这里接两类事件源，RP-14 往这里塞「节点被激活」**——
 /// 它们加的是事件的来源，不是新的事件类型。
 pub struct Dispatcher {
-    tasks: Arc<Tasks>,
+    pub(crate) tasks: Arc<Tasks>,
     skills: Arc<Skills>,
     exec: Arc<dyn ExecContract>,
     audit: Arc<AuditLog>,
@@ -321,6 +321,32 @@ impl Dispatcher {
             .and_then(|bytes| String::from_utf8(bytes).ok()))
     }
 
+    /// 全部"被接受过"的触发对应的执行。**收割器按它找该落账的那些。**
+    ///
+    /// # Errors
+    /// 底层不可用。
+    pub fn accepted_runs(&self) -> Result<Vec<(TaskId, String)>> {
+        let mut out = Vec::new();
+        let mut cursor: Option<Vec<u8>> = None;
+        loop {
+            let page = self
+                .store
+                .scan(TRIGGER_SPACE, &[], cursor.as_deref(), 256)?;
+            if page.is_empty() {
+                return Ok(out);
+            }
+            cursor = page.last().map(|(key, _)| key.clone());
+            for (_, bytes) in page {
+                let Ok(record) = serde_json::from_slice::<TriggerRecord>(&bytes) else {
+                    continue;
+                };
+                if let Outcome::Accepted { run } = record.outcome {
+                    out.push((record.task, run));
+                }
+            }
+        }
+    }
+
     fn remember(&self, task: TaskId, external: Option<&str>, run: RunId) -> Result<()> {
         let Some(external) = external else {
             return Ok(());
@@ -334,3 +360,285 @@ impl Dispatcher {
 /// 让 `UserId` 在文档链接里可见。
 #[allow(dead_code, reason = "文档链接用")]
 type _UserLink = UserId;
+
+/// 「发起一次测试执行」这条链（`SKL-003`）。
+///
+/// ⚠️ **它走的是与正式执行完全相同的那条路**:同一份派工单装配、同一个执行契约、
+/// 同一个引擎。`SKL-003` 要的就是这个——"在与正式执行相同的隔离环境中进行"。
+/// 另开一条更简单的路会让"测过了"这个事实变得不作数。
+///
+/// # 为什么它等着跑完
+///
+/// `EXE-021` 的"提交即返回"管的是**触发**（`run.trigger`）:那条路上没有人在等。
+/// 测试执行是作者手动发起、要当场看结果的——**提交完就返回等于没有回答他的问题**。
+pub struct TestRuns {
+    exec: Arc<dyn ExecContract>,
+    workspaces: Option<Arc<dyn WorkspaceSource>>,
+    clock: Arc<dyn Clock>,
+}
+
+impl std::fmt::Debug for TestRuns {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestRuns").finish_non_exhaustive()
+    }
+}
+
+impl TestRuns {
+    #[must_use]
+    pub fn new(exec: Arc<dyn ExecContract>, clock: Arc<dyn Clock>) -> Self {
+        Self {
+            exec,
+            workspaces: None,
+            clock,
+        }
+    }
+
+    #[must_use]
+    pub fn with_workspaces(mut self, source: Arc<dyn WorkspaceSource>) -> Self {
+        self.workspaces = Some(source);
+        self
+    }
+}
+
+impl xops_skill::service::TestRunner for TestRuns {
+    fn run(
+        &self,
+        actor: UserId,
+        version: &xops_skill::skill::Version,
+        inputs: &serde_json::Value,
+    ) -> Result<xops_skill::service::TestOutcome> {
+        // ⚠️ **一个不落库的任务。** 测试执行不该在账上留下一个任务对象——
+        // 它是作者的一次试跑，不是一条自动化。派工单装配要一个任务，所以这里造一个,
+        // **但它从不经过 `Tasks` 写入任何地方**。
+        let task = Task {
+            id: TaskId::generate(),
+            project: version.project,
+            name: format!("{} 的测试执行", version.skill),
+            ownership: xops_skill::Ownership::Private { owner: actor },
+            kind: xops_task::task::Kind::Normal,
+            skill: version.skill,
+            version_policy: xops_task::policy::VersionPolicy::Pinned {
+                version: version.version,
+            },
+            inputs: inputs.clone(),
+            writes: Vec::new(),
+            subscriptions: Vec::new(),
+            token_budget: xops_task::policy::DEFAULT_TOKEN_BUDGET,
+            overlap: xops_task::policy::Overlap::Skip,
+            on_complete: xops_task::policy::OnComplete::None,
+            enabled: true,
+            created_by: actor,
+            created_at: self.clock.now(),
+        };
+
+        let workspace = if version.declaration.needs_repository {
+            let source = self.workspaces.as_ref().ok_or_else(|| {
+                Error::unavailable("这个技能要读代码仓，而这个部署没有接工作区那条链")
+            })?;
+            Some(source.prepare(version.project, None)?)
+        } else {
+            None
+        };
+
+        let event = Event {
+            kind: EventKind::Manual,
+            project: version.project,
+            external_id: None,
+            triggered_by: Trigger::Person { user: actor },
+            revision: None,
+            at: self.clock.now(),
+            payload: serde_json::json!({}),
+        };
+        let worksheet = crate::worksheet::assemble(&task, version, &event, workspace)?;
+        let timeout = worksheet.limits.timeout_millis;
+        let run = self.exec.submit(worksheet)?;
+
+        // 等它跑完。**上限就是这个技能自己声明的那个**——
+        // 超了由执行运行时的看门狗归为超时（`EXE-019`），这里只是别比它先走。
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(timeout + xops_exec::runtime::GRACE_MILLIS + 500);
+        let outcome = loop {
+            if let Some(done) = self.exec.collect(run)? {
+                break done;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(Error::unavailable(
+                    "测试执行超过了这个技能声明的时长上限，还没有收尾",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+
+        let succeeded = outcome.status == xops_exec::Status::Succeeded;
+        Ok(xops_skill::service::TestOutcome {
+            run: run.to_string(),
+            succeeded,
+            detail: if succeeded {
+                String::new()
+            } else {
+                format!(
+                    "{:?}：{}",
+                    outcome.failure,
+                    outcome.trace.chars().take(500).collect::<String>()
+                )
+            },
+            output: outcome.output,
+        })
+    }
+}
+
+/// 已经落过账的执行。**标记在这里，不在 `_runs` 上**——
+/// 问"落过没有"要在写 `_runs` 之前答得出来。
+const LANDED_SPACE: &str = "dispatch-landed";
+
+/// 把跑完的执行落成账（`EXE-026`、`TSK-006`）。
+///
+/// # 它补的是哪个口子
+///
+/// 触发那条路是**非阻塞**的（`EXE-021`）:`run.trigger` 提交完就返回，没有人在等。
+/// 于是"执行跑完之后谁把 `_runs` 那一行写下来"就成了一个**没有主人的问题**——
+/// 而它不写，`_runs` 就是空的:执行成功了，账上什么也没有。
+///
+/// ⚠️ **这个口子是拿真模型跑端到端时撞出来的**:`run.status` 说 `succeeded`，
+/// `row.sys-runs.select` 一行都没有。落账的实现（`xops_task::Landing`）一直都在，
+/// **只是从来没有谁调用它**。
+///
+/// # 为什么是轮询
+///
+/// 执行在自己的线程上跑完，没有一个"完成"的信号能穿回来——
+/// `ExecContract` 只有 `collect`（`EXE-014`:引擎的概念不得泄漏进契约，
+/// 所以那里没有回调、没有通道）。**扫一遍是这条契约下唯一能做的事。**
+pub struct Reaper {
+    dispatcher: Arc<Dispatcher>,
+    tasks: Arc<Tasks>,
+    landing: Arc<xops_task::landing::Landing>,
+    store: Arc<dyn Store>,
+    exec: Arc<dyn ExecContract>,
+    /// 执行结束要通知任务所有者（`NTF-007`、`EXE-024`）。**没接就等于不通知**——
+    /// 而"自动化失灵是静默的"正是通知这条要挡的事。
+    notices: Option<Arc<dyn RunNotifier>>,
+}
+
+/// 「执行结束了，通知一下」的注入位。RP-17 填它。
+///
+/// 本 crate 不认识通知，所以留一个位——与 `WorkspaceSource`、`SubscriptionCheck` 同形。
+pub trait RunNotifier: Send + Sync + 'static {
+    fn finished(&self, task: &Task, run: &str, status: &str);
+}
+
+impl std::fmt::Debug for Reaper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reaper").finish_non_exhaustive()
+    }
+}
+
+impl Reaper {
+    #[must_use]
+    pub fn new(
+        dispatcher: Arc<Dispatcher>,
+        tasks: Arc<Tasks>,
+        landing: Arc<xops_task::landing::Landing>,
+        store: Arc<dyn Store>,
+        exec: Arc<dyn ExecContract>,
+    ) -> Self {
+        Self {
+            dispatcher,
+            tasks,
+            landing,
+            store,
+            exec,
+            notices: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_notices(mut self, notices: Arc<dyn RunNotifier>) -> Self {
+        self.notices = Some(notices);
+        self
+    }
+
+    /// 扫一遍，把跑完但还没落账的都落了。返回落了几笔。
+    ///
+    /// # Errors
+    /// 底层不可用。**单笔落账失败不中断整轮**——一次写不进去不该让别的执行也落不了账。
+    pub fn sweep(&self) -> Result<usize> {
+        let mut landed = 0;
+        for (task, run) in self.dispatcher.accepted_runs()? {
+            let Ok(id) = xops_core::Id::parse(&run) else {
+                continue;
+            };
+            if self.already_landed(&run)? {
+                continue;
+            }
+            let Some(outcome) = self.exec.collect(RunId::from_id(id))? else {
+                continue; // 还在跑。
+            };
+            match self.land_one(task, &outcome) {
+                Ok(()) => {
+                    self.mark_landed(&run)?;
+                    landed += 1;
+                }
+                Err(error) => {
+                    // ⚠️ **不标记、不中断。** 下一轮再试——
+                    // 而"某一笔一直落不下去"要看得见，所以它记一条。
+                    xops_core::log::warn(
+                        "dispatch.land",
+                        &[("run", &run), ("error", &format!("{error}"))],
+                    );
+                }
+            }
+        }
+        Ok(landed)
+    }
+
+    fn land_one(&self, task: TaskId, outcome: &xops_exec::Outcome) -> Result<()> {
+        let task = self.tasks.read_internal(task)?;
+        let version = self.dispatcher.tasks.resolve_skill_version(&task)?;
+        let completion = xops_task::landing::Completion {
+            run: outcome.run.as_id(),
+            status: outcome.status.as_str().to_owned(),
+            failure_kind: outcome.failure.map(|kind| kind.as_str().to_owned()),
+            tokens_used: outcome.tokens_used,
+            token_budget: task.token_budget,
+            output: outcome.output.clone(),
+            trace: outcome.trace.clone(),
+            revision: None,
+            skill: task.skill.to_string(),
+            skill_version: version.to_string(),
+            trigger: "manual".to_owned(),
+            triggered_by: task.created_by.to_string(),
+            started_at: outcome.started_at,
+            finished_at: outcome.finished_at,
+            rows: Vec::new(),
+        };
+        // 署名是**那次执行**，六项全内联（`TBL-016`）。
+        let written_by = xops_table::WrittenBy::Execution {
+            run: outcome.run.as_id(),
+            task: task.id.as_id(),
+            task_owner: task.created_by,
+            skill: task.skill.to_string(),
+            skill_version: version.to_string(),
+            revision: None,
+            status: outcome.status.as_str().to_owned(),
+        };
+        self.landing.land(
+            &task,
+            xops_task::retention::Retention::default(),
+            &written_by,
+            &completion,
+        )?;
+        // **账先落，再通知。** 反过来会出现"收到通知去看，账上还没有"。
+        if let Some(notices) = &self.notices {
+            notices.finished(&task, &outcome.run.to_string(), outcome.status.as_str());
+        }
+        Ok(())
+    }
+
+    fn already_landed(&self, run: &str) -> Result<bool> {
+        Ok(self.store.get(LANDED_SPACE, run.as_bytes())?.is_some())
+    }
+
+    fn mark_landed(&self, run: &str) -> Result<()> {
+        self.store.put(LANDED_SPACE, run.as_bytes(), b"1")
+    }
+}

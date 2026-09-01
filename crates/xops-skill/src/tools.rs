@@ -301,6 +301,44 @@ skill_tool!(
 );
 
 skill_tool!(
+    TestSkill,
+    "skill.test",
+    "发起一次测试执行。**这是发布的前置**——没有过一次成功的测试执行就发布不了（SKL-003）",
+    Schema::new()
+        .field(project_field())
+        .field(skill_field())
+        .field(Field::required("version", FieldType::Integer, "版本号",))
+        .field(Field::required(
+            "inputs",
+            FieldType::Text { max_len: 4096 },
+            "这次测试的输入（JSON 文本）。**必须满足技能的输入契约**——\
+             带着不合契约的输入跑起来，等于把「测过了」记在一次不算数的执行上",
+        )),
+    Action::WriteSkill,
+    Idempotency::NotIdempotent {
+        reason: "一次测试执行就是一次真的执行：它烧 token、它可能有副作用。\
+                 重复调用应当真的再跑一次，而不是把上一次的结果拿出来",
+    },
+    kinds::SKILL_TESTED,
+    |skills: &Arc<Skills>, context: &CallContext<'_>| {
+        let inputs: Value = serde_json::from_str(context.text("inputs")?)
+            .map_err(|error| xops_core::Error::invalid(format!("输入不是 JSON：{error}")))?;
+        let outcome = skills.test_run(
+            context.identity.user.id,
+            SkillId::from_id(context.id("skill")?),
+            version_of(context)?,
+            &inputs,
+        )?;
+        Ok(json!({
+            "run": outcome.run,
+            "succeeded": outcome.succeeded,
+            "detail": outcome.detail,
+            "output": outcome.output,
+        }))
+    }
+);
+
+skill_tool!(
     DisableSkill,
     "skill.disable",
     "停用一个版本。不再被触发，历史执行记录完整保留",
@@ -410,6 +448,7 @@ fn version_of(context: &CallContext<'_>) -> Result<u32> {
 pub fn register(registry: &mut Registry, skills: &Arc<Skills>) -> Result<()> {
     registry.register(Arc::new(CreateSkill::new(Arc::clone(skills))?))?;
     registry.register(Arc::new(UpdateSkill::new(Arc::clone(skills))?))?;
+    registry.register(Arc::new(TestSkill::new(Arc::clone(skills))?))?;
     registry.register(Arc::new(PublishSkill::new(Arc::clone(skills))?))?;
     registry.register(Arc::new(DisableSkill::new(Arc::clone(skills))?))?;
     registry.register(Arc::new(DerivePrivate::new(Arc::clone(skills))?))?;

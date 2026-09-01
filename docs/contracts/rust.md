@@ -1510,3 +1510,55 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   （`EXE-010`、`EXE-004`、`I-F`）。
 - 它在派工单上而不在某个引擎里:**两个引擎都要这个映射**，各写一份的话它们迟早会不一样，
   而那种不一样表现成"换个引擎产出就变了"。
+
+### Element: rust:xops-skill#TestRunner
+- module: xops-skill
+- consumers: [RP-11]
+- 「发起一次测试执行」的注入位。**RP-11 填它。**
+- ⚠️ **没有它就等于技能发布不了**:发布要一次成功的测试执行（`SKL-003`），
+  而那次执行的入口在这里。**这个死锁真的发生过**——第一次拿真模型跑端到端时撞上的。
+
+### Element: rust:xops-dispatch#TestRuns
+- module: xops-dispatch
+- consumers: [xopsd]
+- 测试执行那条链。**走的是与正式执行完全相同的路**——
+  用一个**不落库的任务**装配派工单:测试执行不该在账上留下一个任务对象，
+  它是作者的一次试跑，不是一条自动化。
+
+### Element: rust:xops-dispatch#Reaper
+- module: xops-dispatch
+- consumers: [xopsd]
+- 把跑完的执行落成账（`EXE-026`、`TSK-006`）。
+- ⚠️ **它补的口子**:触发那条路是非阻塞的（`EXE-021`），
+  于是"执行跑完之后谁把 `_runs` 那一行写下来"是一个**没有主人的问题**。
+  不写，`_runs` 就是空的——**执行成功了，账上什么也没有**。
+  落账的实现（`xops_task::Landing`）一直都在，**只是从来没有谁调用它**。
+  **这也是拿真模型跑端到端时撞出来的。**
+- **为什么是轮询**:`ExecContract` 只有 `collect`，没有回调也没有通道
+  ——`EXE-014` 说引擎的概念不得泄漏进契约，所以那里不会有。**扫一遍是唯一能做的事。**
+- 单笔落账失败**不中断整轮、也不标记**:下一轮再试，而"一直落不下去"记一条 warn。
+- 账先落，**再通知**（`NTF-007`）:反过来会出现"收到通知去看，账上还没有"。
+
+### Element: rust:xops-dispatch#RunNotifier
+- module: xops-dispatch
+- consumers: [RP-17]
+- 「执行结束了，通知一下」的注入位。**没接就等于不通知**——
+  而"自动化失灵是静默的"正是通知这条要挡的事。
+
+### Element: rust:xops-task#Tasks::read_internal
+- module: xops-task
+- consumers: [RP-11]
+- 读一个任务，**不判权**。给平台自己的路径用——落账那条路上没有"调用者"，
+  写入者是一次执行，不是一个人。
+
+### Element: rust:xopsd#Directory::bootstrap_token
+- module: xops-identity
+- consumers: [xopsd]
+- 给一个内建账号签一把令牌，账号不在就先建。**第一把令牌只能这样来**——
+  签令牌经 MCP 要先有令牌（`MCP-002`:每次调用都要带令牌，握手也不例外）。
+- ⚠️ **它只从命令行来（`xopsd --issue-token`），不是一个接口。**
+  开一个"引导端点"是错的答案:**那是一个免认证的、能签出任意权限凭据的网络入口**，
+  而且它会一直在那里。这条路的授权来自**能不能读到那个库文件**——
+  能碰数据库的人本来就能拿到一切。
+- 它绕过自注册开关（`IDN-003`）是有意的:那条开关管的是"陌生人登录能不能自动建号"，
+  与一个已经能读写数据库的调用方无关。

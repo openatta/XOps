@@ -132,6 +132,34 @@ impl Drop for Workspace {
     }
 }
 
+/// 这个远端此刻的默认分支指向哪个 sha。
+///
+/// # Errors
+/// 连不上、仓是空的、解不出。**空仓明确失败**——
+/// 拿不到修订就备不了工作区，而"备了一个空的"比失败更难查。
+pub fn head_of(remote: &str, auth: &AuthConfig) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", auth.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["ls-remote", "--symref", remote, "HEAD"])
+        .output()
+        .map_err(|error| Error::unavailable(format!("跑不起来 git：{error}")))?;
+    if !output.status.success() {
+        return Err(Error::unavailable(format!(
+            "问不到这个仓的当前修订：{}",
+            scrub(&String::from_utf8_lossy(&output.stderr))
+        )));
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| {
+            let (sha, name) = line.split_once(char::is_whitespace)?;
+            (name.trim() == "HEAD" && sha.len() == 40).then(|| sha.to_owned())
+        })
+        .ok_or_else(|| Error::not_found("这个仓上解不出 HEAD —— 它可能是空的"))
+}
+
 /// 备一份工作区。
 ///
 /// # Errors

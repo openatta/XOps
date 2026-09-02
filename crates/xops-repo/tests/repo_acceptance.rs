@@ -128,7 +128,7 @@ fn 写得进去的凭据绑不上() {
             alice,
             project,
             "https://example.com/x.git",
-            Secret::new("能写"),
+            Some(Secret::new("能写")),
         )
         .unwrap_err();
     assert!(
@@ -157,7 +157,7 @@ fn 只读的凭据绑得上而且原文读不出来() {
             alice,
             project,
             "https://example.com/x.git",
-            Secret::new("ghp_只读"),
+            Some(Secret::new("ghp_只读")),
         )
         .unwrap();
 
@@ -180,7 +180,7 @@ fn 一个项目当前只绑一个仓() {
             alice,
             project,
             "https://example.com/a.git",
-            Secret::new("x"),
+            Some(Secret::new("x")),
         )
         .unwrap();
     let error = fixture
@@ -189,7 +189,7 @@ fn 一个项目当前只绑一个仓() {
             alice,
             project,
             "https://example.com/b.git",
-            Secret::new("y"),
+            Some(Secret::new("y")),
         )
         .unwrap_err();
     assert!(error.message().contains("当前绑一个"), "RPO-001");
@@ -205,7 +205,7 @@ fn 轮换之后旧密文不再存在() {
             alice,
             project,
             "https://example.com/x.git",
-            Secret::new("旧的"),
+            Some(Secret::new("旧的")),
         )
         .unwrap();
     let before = fixture
@@ -238,7 +238,7 @@ fn 轮换成一把能写的会被拒() {
             alice,
             project,
             "https://example.com/x.git",
-            Secret::new("只读"),
+            Some(Secret::new("只读")),
         )
         .unwrap();
 
@@ -247,7 +247,12 @@ fn 轮换成一把能写的会被拒() {
     let (bob, other) = writable.owner();
     let error = writable
         .repos
-        .bind(bob, other, "https://example.com/y.git", Secret::new("能写"))
+        .bind(
+            bob,
+            other,
+            "https://example.com/y.git",
+            Some(Secret::new("能写")),
+        )
         .unwrap_err();
     assert!(error.message().contains("不持有仓库写权限"));
 }
@@ -266,7 +271,7 @@ fn 解绑之后绑定就没了() {
             alice,
             project,
             "https://example.com/x.git",
-            Secret::new("x"),
+            Some(Secret::new("x")),
         )
         .unwrap();
     fixture.repos.unbind(alice, project).unwrap();
@@ -283,7 +288,7 @@ fn 非成员看到的与项目不存在一致() {
             alice,
             project,
             "https://example.com/x.git",
-            Secret::new("x"),
+            Some(Secret::new("x")),
         )
         .unwrap();
     let bob = fixture
@@ -603,11 +608,21 @@ fn webhook密钥按项目一把_一次投递最多命中一个项目() {
 
     fixture
         .repos
-        .bind(alice, first, "https://host/one.git", Secret::new("t1"))
+        .bind(
+            alice,
+            first,
+            "https://host/one.git",
+            Some(Secret::new("t1")),
+        )
         .unwrap();
     fixture
         .repos
-        .bind(alice, second, "https://host/two.git", Secret::new("t2"))
+        .bind(
+            alice,
+            second,
+            "https://host/two.git",
+            Some(Secret::new("t2")),
+        )
         .unwrap();
     fixture
         .repos
@@ -652,7 +667,12 @@ fn 没设webhook密钥的项目收不到投递() {
     let (alice, project) = fixture.owner();
     fixture
         .repos
-        .bind(alice, project, "https://host/one.git", Secret::new("t"))
+        .bind(
+            alice,
+            project,
+            "https://host/one.git",
+            Some(Secret::new("t")),
+        )
         .unwrap();
 
     let body = br#"{"ref":"refs/heads/main"}"#;
@@ -676,4 +696,101 @@ fn 没设webhook密钥的项目收不到投递() {
             .is_none(),
         "状态里看得出来没设"
     );
+}
+
+// ————————————————————— 本地仓（file://）————————————————————————
+
+/// 造一个 bare 仓，推一笔提交进去，返回 `(仓路径, 修订)`。
+fn 本地仓(word: &str) -> (PathBuf, String) {
+    let root = std::env::temp_dir().join(format!("xops-local-{}", xops_core::Id::generate()));
+    let bare = root.join("origin.git");
+    let work = root.join("work");
+    fs::create_dir_all(&bare).unwrap();
+    fs::create_dir_all(&work).unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}：{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&bare, &["init", "--quiet", "--bare"]);
+    git(&work, &["init", "--quiet"]);
+    git(&work, &["config", "user.email", "t@xops"]);
+    git(&work, &["config", "user.name", "t"]);
+    fs::write(work.join("口令.md"), format!("{word}\n")).unwrap();
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "--quiet", "-m", "第一笔"]);
+    git(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(
+        &work,
+        &["push", "--quiet", "origin", "HEAD:refs/heads/main"],
+    );
+    let out = Command::new("git")
+        .current_dir(&work)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let revision = String::from_utf8(out.stdout).unwrap().trim().to_owned();
+    // 只读之后才绑得上（RPO-013）。
+    let mut mode = fs::metadata(&bare).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    mode.set_mode(0o555);
+    for entry in walkdir(&bare) {
+        let _ = fs::set_permissions(&entry, fs::Permissions::from_mode(0o555));
+    }
+    let _ = fs::set_permissions(&bare, mode);
+    (bare, revision)
+}
+
+fn walkdir(root: &Path) -> Vec<PathBuf> {
+    let mut out = vec![];
+    let Ok(entries) = fs::read_dir(root) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walkdir(&path));
+        }
+        out.push(path);
+    }
+    out
+}
+
+#[test]
+fn 本地仓绑得上而且备得出工作区() {
+    // ⚠️ 这条走的是**真的 git**，不是 FakePlatform：`file://` 那条路上
+    // 平台适配一步都不参与（没有认证，也没有 dry-run 探针）。
+    let fixture = fixture(WriteProbe::ReadOnly);
+    let (alice, project) = fixture.owner();
+    let (bare, revision) = 本地仓("鲸鱼吃了七枚橄榄");
+    let remote = format!("file://{}", bare.display());
+
+    // **不给凭据** —— 本地仓的取用不经过认证。
+    let binding = fixture.repos.bind(alice, project, &remote, None).unwrap();
+    assert_eq!(binding.platform, "local", "本地仓不是任何一个平台的仓");
+    assert!(binding.credential.is_none(), "没有凭据可存");
+
+    // 不指定修订时解出**确切的 sha**，不是分支名（RPO-010）。
+    let head = fixture.repos.head_revision(project).unwrap();
+    assert_eq!(head, revision, "解出来的该是那一笔提交");
+
+    let workspace = fixture.repos.prepare_workspace(project, &head).unwrap();
+    assert_eq!(workspace.revision(), revision);
+    let 口令 = fs::read_to_string(workspace.root().join("口令.md")).unwrap();
+    assert_eq!(口令.trim(), "鲸鱼吃了七枚橄榄", "备出来的就是那个仓的内容");
+
+    // RPO-009：只读。
+    let 写得进去 = fs::write(workspace.root().join("新文件"), "x").is_ok();
+    assert!(!写得进去, "工作区必须是只读的");
+
+    let root = workspace.root().to_path_buf();
+    drop(workspace);
+    assert!(!root.exists(), "析构即销毁");
 }

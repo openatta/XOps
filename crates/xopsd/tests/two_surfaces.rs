@@ -429,9 +429,17 @@ fn 每一条注入位都在装配层被填上() {
             "订阅声明不校验",
         ),
         (
-            "WorkspaceSource / Repos",
-            "GitPlatform",
-            "要读代码仓的技能跑不了",
+            // ⚠️ 这条以前数的是字符串 `GitPlatform`——那个词因为**别的原因**
+            // 也在装配层里，于是它一直是绿的，而 `WorkspaceSource`
+            // 全仓一处实现都没有。**数名字不如数接口。**
+            "WorkspaceSource（正式触发那条）",
+            ".with_workspaces(Arc::clone(&workspaces))",
+            "**要读代码仓的技能跑不了**：拿不到工作区",
+        ),
+        (
+            "WorkspaceSource（技能试跑那条）",
+            "with_workspaces(Arc::clone(&workspaces)),",
+            "**要读代码仓的技能发布不了**：试跑拿不到工作区，而发布要一次成功的试跑",
         ),
         (
             "WebhookSink（Git webhook）",

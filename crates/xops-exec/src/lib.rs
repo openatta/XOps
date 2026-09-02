@@ -17,6 +17,7 @@ pub mod engine;
 pub mod failure;
 pub mod provider;
 pub mod runtime;
+pub mod scene;
 pub mod stub;
 pub mod worksheet;
 

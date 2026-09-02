@@ -10,7 +10,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -77,6 +77,12 @@ pub struct Dispatcher {
     workspaces: Option<Arc<dyn WorkspaceSource>>,
     /// 并发名额（`EXE-027`）。**没接就等于不限**——所以装配层必须接。
     slots: Option<Arc<Slots>>,
+    /// 在跑的那些执行各自攥着的工作区。
+    ///
+    /// ⚠️ **它不是注入位，是这个类型自己的账。** 工作区析构即销毁，而提交是非阻塞的:
+    /// 从 `submit` 返回到 [`Reaper`] 发现它跑完，中间没有任何人天然持有它。
+    /// 放手的时刻与"这次执行结束了"是同一件事——见 [`Dispatcher::finished`]。
+    held: Mutex<HashMap<String, Arc<dyn PreparedWorkspace>>>,
 }
 
 /// 名额的持有处。
@@ -137,15 +143,30 @@ impl Slots {
     }
 }
 
+/// 一份备好的、**还活着的**只读工作区。
+///
+/// ⚠️ **交路径不交所有权是不行的。** 那份工作区是析构即销毁的（`RPO-009`）：
+/// 只交一个 `PathBuf` 出去，备它的那一侧一放手，**执行还没开始目录就没了**。
+/// 所以这里交的是一个要被攥住的东西，谁用谁攥着。
+pub trait PreparedWorkspace: Send + Sync + 'static {
+    fn path(&self) -> &Path;
+}
+
 /// 「按修订备一份只读工作区」的注入位。RP-08 填它。
 ///
 /// 分开是因为 `TRG` 那条验收：**不依赖 RP-08 也能跑通**——
-/// 声明"不需要代码仓"的技能，全链路正常。
+/// 声明"不需要代码仓"的技能，全链路正常，而且**连问都不问一次**。
 pub trait WorkspaceSource: Send + Sync + 'static {
+    /// `revision` 是 `None` 时由实现方解出**那个仓此刻的确切修订**，
+    /// 并且必须是确切的:`RPO-010` 要回答的是"这份报告针对哪版代码"。
+    ///
     /// # Errors
     /// 备不出来。
-    fn prepare(&self, project: xops_identity::ProjectId, revision: Option<&str>)
-    -> Result<PathBuf>;
+    fn prepare(
+        &self,
+        project: xops_identity::ProjectId,
+        revision: Option<&str>,
+    ) -> Result<Arc<dyn PreparedWorkspace>>;
 }
 
 impl std::fmt::Debug for Dispatcher {
@@ -175,7 +196,18 @@ impl Dispatcher {
             clock,
             workspaces: None,
             slots: None,
+            held: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// 这次执行结束了，把它攥着的工作区放掉。
+    ///
+    /// 由 [`Reaper`] 在落账之后调。**落账失败不放**——那次重来还要读同一份代码。
+    pub fn finished(&self, run: &str) {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(run);
     }
 
     /// 接上并发名额（`EXE-027`）。
@@ -294,10 +326,22 @@ impl Dispatcher {
             None => None,
         };
 
-        let worksheet = assemble(task, &version, event, workspace)?;
+        let worksheet = assemble(
+            task,
+            &version,
+            event,
+            workspace.as_ref().map(|held| held.path().to_path_buf()),
+        )?;
         let run = self.exec.submit(worksheet)?;
         if let (Some(slots), Some(permit)) = (self.slots.as_ref(), permit) {
             slots.keep(&run.to_string(), permit);
+        }
+        // 工作区要活到这次执行跑完（`Reaper` 落账时放）。
+        if let Some(held) = workspace {
+            self.held
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(run.to_string(), held);
         }
         self.remember(task.id, event.external_id.as_deref(), run)?;
         Ok(Outcome::Accepted {
@@ -530,6 +574,7 @@ impl xops_skill::service::TestRunner for TestRuns {
             created_at: self.clock.now(),
         };
 
+        // 试跑等到跑完才返回，所以工作区攥在一个局部变量里就够了。
         let workspace = if version.declaration.needs_repository {
             let source = self.workspaces.as_ref().ok_or_else(|| {
                 Error::unavailable("这个技能要读代码仓，而这个部署没有接工作区那条链")
@@ -558,7 +603,12 @@ impl xops_skill::service::TestRunner for TestRuns {
             None => None,
         };
 
-        let worksheet = crate::worksheet::assemble(&task, version, &event, workspace)?;
+        let worksheet = crate::worksheet::assemble(
+            &task,
+            version,
+            &event,
+            workspace.as_ref().map(|held| held.path().to_path_buf()),
+        )?;
         let timeout = worksheet.limits.timeout_millis;
         let run = self.exec.submit(worksheet)?;
 
@@ -701,6 +751,8 @@ impl Reaper {
                     if let Some(slots) = self.slots.as_ref() {
                         slots.give_back(&run);
                     }
+                    // 工作区也在这一刻放手 —— 与名额同一个时刻，同一个理由。
+                    self.dispatcher.finished(&run);
                     landed += 1;
                 }
                 Err(error) => {

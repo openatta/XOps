@@ -99,7 +99,7 @@ impl Repos {
         actor: UserId,
         project: ProjectId,
         remote: &str,
-        secret: Secret,
+        secret: Option<Secret>,
     ) -> Result<Binding> {
         self.directory
             .authorize(actor, project, Action::BindRepository)?;
@@ -109,8 +109,21 @@ impl Repos {
             ));
         }
         crate::binding::check_remote(remote)?;
+        let local = crate::local::path_of(remote).is_some();
+        if local && secret.is_some() {
+            return Err(Error::invalid(
+                "本地仓不要给凭据 —— 它的取用不经过认证，给了也不会被用到",
+            ));
+        }
+        // 远端仓**必须**给:`RPO-002` 要试的就是这把凭据写不写得进去。
+        if !local && secret.is_none() {
+            return Err(Error::invalid("远端仓要给一把只读凭据"));
+        }
+        // 本地仓那条路不看它（`local::probe` 问的是文件系统，不是这把凭据）。
+        let unused = Secret::new("");
+        let probe_secret = secret.as_ref().unwrap_or(&unused);
 
-        match self.platform.probe_write_access(remote, &secret)? {
+        match self.platform.probe_write_access(remote, probe_secret)? {
             WriteProbe::ReadOnly => {}
             WriteProbe::Writable => {
                 return Err(Error::invalid(
@@ -122,8 +135,9 @@ impl Repos {
         let binding = Binding::new(
             project,
             remote,
-            self.platform.id(),
-            self.sealer.seal(&secret)?,
+            // 本地仓不是任何一个平台的仓。记成 github 会让 `repo.status` 说谎。
+            if local { "local" } else { self.platform.id() },
+            secret.map(|secret| self.sealer.seal(&secret)).transpose()?,
             actor,
             self.clock.now(),
         )?;
@@ -139,10 +153,15 @@ impl Repos {
         self.directory
             .authorize(actor, project, Action::BindRepository)?;
         let mut binding = self.require(project)?;
+        if crate::local::path_of(&binding.remote).is_some() {
+            return Err(Error::invalid(
+                "本地仓没有凭据可换 —— 它的取用不经过认证（要改只读与否，改目录权限）",
+            ));
+        }
         if self.platform.probe_write_access(&binding.remote, &secret)? == WriteProbe::Writable {
             return Err(Error::invalid("新凭据写得进去，不能用（RPO-013）"));
         }
-        binding.credential = self.sealer.seal(&secret)?;
+        binding.credential = Some(self.sealer.seal(&secret)?);
         self.persist(&binding, kinds::REPO_ROTATED, WriteOp::Update, actor)?;
         Ok(binding)
     }
@@ -245,6 +264,28 @@ impl Repos {
         self.binding(project)
     }
 
+    /// 这个仓此刻的确切修订（默认分支的头）。
+    ///
+    /// ⚠️ **它解出来的是一个 sha,不是 "HEAD"。** `RPO-010` 要回答的是
+    /// "这份报告针对哪版代码",而 `HEAD` 明天指向别处——一次执行的追溯链
+    /// 不能挂在一个会动的名字上。触发方没指定修订时走这条,**解完就钉住**。
+    ///
+    /// # Errors
+    /// 没绑过 · 连不上 · 解不出。
+    pub fn head_revision(&self, project: ProjectId) -> Result<String> {
+        let binding = self.require(project)?;
+        let auth = match &binding.credential {
+            Some(sealed) => {
+                let secret = self.sealer.open(sealed)?;
+                let auth = AuthConfig::write(self.platform.auth_header(&secret))?;
+                drop(secret);
+                auth
+            }
+            None => AuthConfig::anonymous()?,
+        };
+        crate::workspace::head_of(&binding.remote, &auth)
+    }
+
     /// 按确切修订备一份只读工作区，交给执行方。
     ///
     /// `RPO-009`：**一次执行的工作区只包含一个项目的代码**——它是从这个项目的绑定备的，
@@ -255,9 +296,16 @@ impl Repos {
     pub fn prepare_workspace(&self, project: ProjectId, revision: &str) -> Result<Workspace> {
         let mut binding = self.require(project)?;
         // 唯一一处解开凭据的地方（`RPO-005`）。
-        let secret = self.sealer.open(&binding.credential)?;
-        let auth = AuthConfig::write(self.platform.auth_header(&secret))?;
-        drop(secret);
+        // 本地仓没有凭据,用一份空配置——**不是降级,是那条路上真的没有认证**。
+        let auth = match &binding.credential {
+            Some(sealed) => {
+                let secret = self.sealer.open(sealed)?;
+                let auth = AuthConfig::write(self.platform.auth_header(&secret))?;
+                drop(secret);
+                auth
+            }
+            None => AuthConfig::anonymous()?,
+        };
 
         std::fs::create_dir_all(&self.workspaces)
             .map_err(|error| Error::internal(format!("建不了工作区目录：{error}")))?;

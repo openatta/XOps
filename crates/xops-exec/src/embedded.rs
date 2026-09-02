@@ -85,6 +85,26 @@ impl EmbeddedEngine {
         settings
     }
 
+    /// 这一次执行的配置:**把备好的只读工作区变成 agent 的工作目录**。
+    ///
+    /// ⚠️ **这条线在 `D61` 把引擎搬进程时断过。** 两进程那版是把工作区当
+    /// `session.create` 的 `project_root` 传过去的（见 `attacore.rs`）;
+    /// 搬进程之后这一步没跟过来,于是 agent 的工作目录一直是
+    /// `Settings.paths.local_data_dir` 的默认值 `"."`——**xopsd 进程自己的 cwd**。
+    /// 后果是声明了 `needsRepository` 的技能读的是 XOps 的源码目录,
+    /// **而且不报错**:它确实读到了东西,只是读错了地方。
+    ///
+    /// 引擎那一侧的工作目录是 `local_data_dir` 的**上一级**,所以这里放的是
+    /// `<工作区>/.atta`——那个位置由引擎定,不由我们定。
+    fn settings_for(&self, worksheet: &Worksheet) -> Arc<Settings> {
+        let Some(workspace) = worksheet.capabilities.workspace.as_ref() else {
+            return Arc::clone(&self.settings);
+        };
+        let mut settings = (*self.settings).clone();
+        settings.paths.local_data_dir = workspace.join(".atta");
+        Arc::new(settings)
+    }
+
     /// # Errors
     /// tokio runtime 建不起来。
     pub fn new(
@@ -162,7 +182,7 @@ impl EmbeddedEngine {
         let (mut agent, mut events, _input) = Builder::new()
             .scene(Arc::clone(&self.scene))
             .model(Arc::clone(&self.model))
-            .settings(Arc::clone(&self.settings))
+            .settings(self.settings_for(worksheet))
             .session_id(run.clone())
             .build()
             .map_err(|error| (FailureKind::Engine, format!("会话建不起来：{error}")))?;
@@ -263,12 +283,19 @@ fn describe(event: &AgentEvent) -> String {
 }
 
 /// 事件的变体名。`serde` 的 tag 就是它,不用自己维护一张表。
+///
+/// ⚠️ **tag 的键名是 `kind`,不是 `type`。** 早先这里读的是 `type`,永远读不到,
+/// 于是每一条事件在过程记录里都写成字面量 `"event"`——**73 行 `event`**。
+/// `EXE-022` 要的是"出了事能读的东西",而那样的记录一个字也没说。
+/// 一个测试盯着这件事:上游改了 tag 名,这里要当场红。
+const EVENT_TAG: &str = "kind";
+
 fn variant(event: &AgentEvent) -> String {
     serde_json::to_value(event)
         .ok()
         .and_then(|value| {
             value
-                .get("type")
+                .get(EVENT_TAG)
                 .and_then(|tag| tag.as_str().map(str::to_owned))
         })
         .unwrap_or_else(|| "event".to_owned())
@@ -280,4 +307,86 @@ fn tokens(usage: &Usage) -> u64 {
 
 fn tokio_util_cancel() -> tokio_util::sync::CancellationToken {
     tokio_util::sync::CancellationToken::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn engine_for_test() -> EmbeddedEngine {
+        let mock: Arc<dyn attacore_model::client::AnthropicClient> =
+            Arc::new(attacore_model::mock::MockAnthropicClient::new());
+        EmbeddedEngine::new(
+            Arc::new(attacore_scene::scene::chat::ChatScene),
+            Arc::new(attacore_model::adapter::AnthropicModel::new(mock)),
+            Arc::new(EmbeddedEngine::settings("m")),
+        )
+        .unwrap()
+    }
+
+    fn sheet_for_test() -> Worksheet {
+        Worksheet {
+            run: crate::worksheet::RunId::generate(),
+            instruction: "做点什么".into(),
+            skill: "s".into(),
+            skill_version: "1".into(),
+            inputs: String::new(),
+            revision: None,
+            capabilities: crate::worksheet::Capabilities::default(),
+            limits: crate::worksheet::Limits::default(),
+        }
+    }
+
+    #[test]
+    fn 事件在过程记录里说得出自己是什么() {
+        // ⚠️ 这条盯的是**上游改了 tag 名**。早先读的是 `type`，而上游是 `kind`——
+        // 读不到就回退成字面量 `"event"`，于是 `_runs.trace` 里是七十几行 `event`。
+        // 那种记录不报错、不为空、**什么也没说**，只有拿真模型跑一遍才看得出来。
+        let event = AgentEvent::ThinkingDelta {
+            text: "想".into(),
+            turn_id: "t".into(),
+        };
+        let described = describe(&event);
+        assert_ne!(described, "event", "回退到字面量了 —— tag 键名对不上");
+        assert_eq!(described, "thinking_delta");
+    }
+
+    #[test]
+    fn 备好的工作区真的成了agent的工作目录() {
+        // ⚠️ 这条盯的是 `D61` 搬进程时断掉的那根线。断掉的表现**不是报错**:
+        // agent 照样跑，只是在 xopsd 自己的 cwd 里跑——读到的是 XOps 的源码。
+        // 「读错了地方」和「读不到」是两件事，后者会喊，前者不会。
+        let engine = engine_for_test();
+        let mut sheet = sheet_for_test();
+        sheet.capabilities.workspace = Some(PathBuf::from("/tmp/ws-1"));
+
+        let settings = engine.settings_for(&sheet);
+        assert_eq!(
+            settings.paths.project_root(),
+            PathBuf::from("/tmp/ws-1"),
+            "工作目录该是那份工作区"
+        );
+
+        // 没有工作区的技能（不读代码仓）照旧 —— **不许顺手给它一个目录**。
+        sheet.capabilities.workspace = None;
+        assert_eq!(
+            engine.settings_for(&sheet).paths.local_data_dir,
+            engine.settings.paths.local_data_dir,
+            "不声明代码仓的执行不该被塞一个工作目录（I-I）"
+        );
+    }
+
+    #[test]
+    fn 正文与结束事件另有说法() {
+        assert_eq!(
+            describe(&AgentEvent::TextDelta {
+                text: "四个字".into(),
+                turn_id: "t".into(),
+            }),
+            "text +9",
+            "正文只记长度不记内容（I-F）"
+        );
+    }
 }

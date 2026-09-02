@@ -41,6 +41,61 @@ pub trait GitPlatform: Send + Sync + 'static {
     fn verify_webhook(&self, secret: &str, body: &[u8], signature: &str) -> bool;
 }
 
+/// 试写用的临时空仓。**推的是一笔空提交,不是任何真实内容。**
+///
+/// 析构即删。它只需要有一个 `HEAD` 能拿去和服务端协商权限。
+struct ProbeRepo {
+    root: std::path::PathBuf,
+}
+
+impl ProbeRepo {
+    fn new() -> Result<Self> {
+        let root = std::env::temp_dir().join(format!("xops-probe-{}", xops_core::Id::generate()));
+        std::fs::create_dir_all(&root)
+            .map_err(|error| Error::internal(format!("建不了试写用的临时目录：{error}")))?;
+        let repo = Self { root };
+        for args in [
+            vec!["init", "--quiet"],
+            vec![
+                "-c",
+                "user.email=probe@xops",
+                "-c",
+                "user.name=xops",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "probe",
+            ],
+        ] {
+            let output = Command::new("git")
+                .current_dir(&repo.root)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args(&args)
+                .output()
+                .map_err(|error| Error::unavailable(format!("跑不起来 git：{error}")))?;
+            if !output.status.success() {
+                return Err(Error::unavailable(format!(
+                    "建不起试写用的空仓：{}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+        }
+        Ok(repo)
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.root
+    }
+}
+
+impl Drop for ProbeRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
 /// GitHub。`IDN-002` 说先做它。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GitHub;
@@ -59,12 +114,27 @@ impl GitPlatform for GitHub {
     }
 
     fn probe_write_access(&self, remote: &str, secret: &Secret) -> Result<WriteProbe> {
+        // **本地仓的只读证明不是推一次，是问操作系统。** 见 `local::probe`。
+        if let Some(path) = crate::local::path_of(remote) {
+            return crate::local::probe(&path);
+        }
+
         // 往一个几乎不可能存在的 ref 上做一次 dry-run 推送。
         // dry-run 照样要服务端做权限判定，但**不会真的改动仓库**——
         // 这正是"尝试一次写"该有的形态：判定是真的，副作用是没有的。
         let probe = format!("refs/heads/xops-write-probe-{}", xops_core::Id::generate());
         let config = crate::workspace::AuthConfig::write(self.auth_header(secret))?;
+
+        // ⚠️ **在一个临时的空仓里推，不在 xopsd 自己的 cwd 里推。**
+        // 早先这里没有设工作目录，两个后果都是真的：
+        //   ① cwd 不是 git 仓时（从 /var/lib/xops 起进程），git 报 "not a git
+        //      repository"，那句话不匹配任何一个"被拒绝"的关键词 → 落到
+        //      "试写没能得出结论" → **绑定必失败**，而失败的原因与那个仓无关；
+        //   ② cwd 是 git 仓时（从源码目录起），推的是 **XOps 自己的 HEAD**，
+        //      拿去和第三方服务器协商。dry-run 不写东西，但源不该是这个。
+        let scratch = ProbeRepo::new()?;
         let output = Command::new("git")
+            .current_dir(scratch.path())
             .env("GIT_CONFIG_GLOBAL", config.path())
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_TERMINAL_PROMPT", "0")

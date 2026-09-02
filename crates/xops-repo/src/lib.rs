@@ -8,6 +8,7 @@
 
 pub mod binding;
 pub mod credential;
+pub mod local;
 pub mod platform;
 pub mod service;
 pub mod tools;

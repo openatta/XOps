@@ -262,7 +262,7 @@ fn scene(fixture: &Fixture, bind_repo: bool, register: bool) -> Scene {
                 owner,
                 project,
                 "https://github.com/openatta/XOps.git",
-                Secret::new("ro-token"),
+                Some(Secret::new("ro-token")),
             )
             .unwrap();
     }

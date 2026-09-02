@@ -18,7 +18,13 @@ pub struct Binding {
     /// 哪个平台（`RPO-007`）。
     pub platform: String,
     /// **密文**。原文任何接口都读不出来（`RPO-003`）。
-    pub credential: SealedCredential,
+    ///
+    /// ⚠️ **本地仓（`file://`）没有凭据,这里是 `None`。** 它不是"忘了填":
+    /// 本地仓的取用不经过任何认证,也就没有可轮换、可泄漏、可过期的东西。
+    /// 让它必填、由调用方塞一个占位串进来更糟——**那是往一个专放密钥的字段里放垃圾**,
+    /// 而 `repo.rotate` 会把那串垃圾当成一把真凭据去换。
+    #[serde(default)]
+    pub credential: Option<SealedCredential>,
     pub bound_by: UserId,
     pub bound_at: Timestamp,
     /// 上次拉取的时刻与修订（`RPO-012`）。
@@ -45,7 +51,7 @@ impl Binding {
         project: ProjectId,
         remote: impl Into<String>,
         platform: impl Into<String>,
-        credential: SealedCredential,
+        credential: Option<SealedCredential>,
         bound_by: UserId,
         bound_at: Timestamp,
     ) -> Result<Self> {
@@ -79,9 +85,12 @@ pub fn check_remote(remote: &str) -> Result<()> {
     }
     if !(remote.starts_with("https://")
         || remote.starts_with("ssh://")
-        || remote.starts_with("git@"))
+        || remote.starts_with("git@")
+        || remote.starts_with(crate::local::SCHEME))
     {
-        return Err(Error::invalid("远端地址只认 https:// · ssh:// · git@"));
+        return Err(Error::invalid(
+            "远端地址只认 https:// · ssh:// · git@ · file://",
+        ));
     }
     Ok(())
 }
@@ -94,8 +103,11 @@ mod tests {
     fn 远端地址挑得住() {
         assert!(check_remote("https://github.com/openatta/XOps.git").is_ok());
         assert!(check_remote("git@github.com:openatta/XOps.git").is_ok());
+        assert!(check_remote("file:///srv/repos/x.git").is_ok());
         assert!(check_remote("").is_err());
         assert!(check_remote("ftp://x").is_err());
+        // 裸路径不认:它与 scp 式的 `host:path` 分不开。
+        assert!(check_remote("/srv/repos/x.git").is_err());
     }
 
     #[test]

@@ -61,18 +61,19 @@ macro_rules! repo_tool {
 repo_tool!(
     BindRepo,
     "repo.bind",
-    "绑一个 Git 仓。**绑定前会实际推一次 dry-run，写得进去就拒绝**",
+    "绑一个 Git 仓。**绑定前会实际试一次写，写得进去就拒绝**",
     Schema::new()
         .field(project_field())
         .field(Field::required(
             "remote",
             FieldType::Text { max_len: 512 },
-            "远端地址。**凭据不要写进 URL**"
+            "远端地址。https:// · ssh:// · git@ · file://（本地仓）。**凭据不要写进 URL**"
         ))
-        .field(Field::required(
+        .field(Field::optional(
             "credential",
             FieldType::Text { max_len: 512 },
-            "只读凭据。**只呈现这一次**：之后加密存储，任何接口都读不出原文",
+            "只读凭据。**只呈现这一次**：之后加密存储，任何接口都读不出原文。\
+             **本地仓（file://）不要给**——它的取用不经过认证，给了也不会被用到",
         )),
     Idempotency::Keyed,
     kinds::REPO_BOUND,
@@ -82,7 +83,10 @@ repo_tool!(
             context.identity.user.id,
             project,
             context.text("remote")?,
-            Secret::new(context.text("credential")?),
+            context
+                .arg("credential")
+                .and_then(Value::as_str)
+                .map(Secret::new),
         )?;
         Ok(json!({"remote": binding.remote, "platform": binding.platform}))
     }

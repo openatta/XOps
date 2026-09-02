@@ -28,14 +28,25 @@ struct CountingWorkspaces {
     calls: AtomicUsize,
 }
 
+/// 一份假的工作区。真的那份是析构即销毁的，所以这条缝交的是**要被攥住的东西**。
+struct FakeHeld(std::path::PathBuf);
+
+impl xops_dispatch::PreparedWorkspace for FakeHeld {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
 impl WorkspaceSource for CountingWorkspaces {
     fn prepare(
         &self,
         _project: ProjectId,
         _revision: Option<&str>,
-    ) -> xops_core::Result<std::path::PathBuf> {
+    ) -> xops_core::Result<Arc<dyn xops_dispatch::PreparedWorkspace>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(std::path::PathBuf::from("/tmp/xops-fake-workspace"))
+        Ok(Arc::new(FakeHeld(std::path::PathBuf::from(
+            "/tmp/xops-fake-workspace",
+        ))))
     }
 }
 

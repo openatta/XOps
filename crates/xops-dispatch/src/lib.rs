@@ -18,7 +18,7 @@ pub mod tools;
 pub mod webhook;
 pub mod worksheet;
 
-pub use dispatch::{Dispatcher, Outcome, Slots, TriggerRecord, WorkspaceSource};
+pub use dispatch::{Dispatcher, Outcome, PreparedWorkspace, Slots, TriggerRecord, WorkspaceSource};
 pub use event::{Event, EventKind, Trigger};
 pub use schedule::{Cadence, Schedule};
 pub use schedule_store::Schedules;

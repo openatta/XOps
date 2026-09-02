@@ -550,3 +550,15 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - 查绑定与同步状态（`RPO-012`）。**响应里没有 credential 字段，也不会有**（`RPO-003`）。
 - `webhookConfigured`:设没设 webhook 密钥要看得见——**没设就是这个项目
   收不到 webhook**，而那件事本身是静默的（端点一律回"不存在"）。只说有没有，不说是什么。
+
+### Element: api:mcp.tool.repo.bind
+- module: xops-repo
+- consumers: [agent]
+- 绑一个 Git 仓。**绑定前会实际试一次写，写得进去就拒绝**（`RPO-002`、`RPO-013`）。
+- 远端地址认 `https://` · `ssh://` · `git@` · `file://`（本地仓）。
+  **凭据不要写进 URL**——它会跟着 URL 进日志、进错误消息、进 `git remote -v`。
+- `credential` **可选**：远端仓必须给一把只读凭据；
+  **本地仓（`file://`）不要给**——它的取用不经过认证，给了会被拒。
+  往一个专放密钥的字段里塞占位串，`repo.rotate` 会把那串垃圾当成一把真凭据去换。
+- 本地仓的只读证明是**问操作系统**，不是推一次:`git push --dry-run` 走 `file://` 时
+  目标目录只读也返回 0，远端那条判定在本地是静默失效的。

@@ -138,6 +138,44 @@ impl xops_web::WebhookSink for GitWebhooks {
     }
 }
 
+/// 「按修订备一份只读工作区」那条链（`RP-08` → `RP-11`）。
+///
+/// ⚠️ **这条以前一处实现都没有。** `WorkspaceSource` 是个注入位，
+/// 而全仓没有任何东西填它——于是声明了 `needsRepository` 的技能
+/// **两条路都跑不了**:正式触发拿不到工作区，试跑也拿不到。
+/// 那条枚举验收当时没抓住它，因为它数的是字符串 `GitPlatform`,
+/// 而那个词因为别的原因也在装配层里出现——**数名字不如数接口**。
+struct Workspaces {
+    repos: Arc<Repos>,
+}
+
+/// 一份还活着的工作区。**攥着它的人放手，那个目录就没了**（`RPO-009`）。
+struct Held(xops_repo::Workspace);
+
+impl xops_dispatch::PreparedWorkspace for Held {
+    fn path(&self) -> &std::path::Path {
+        self.0.root()
+    }
+}
+
+impl xops_dispatch::WorkspaceSource for Workspaces {
+    fn prepare(
+        &self,
+        project: ProjectId,
+        revision: Option<&str>,
+    ) -> Result<Arc<dyn xops_dispatch::PreparedWorkspace>> {
+        // 没指定修订就解出此刻的确切 sha,**解完就钉住**:
+        // `RPO-010` 要回答的是"这份报告针对哪版代码",而分支名明天指向别处。
+        let revision = match revision {
+            Some(revision) => revision.to_owned(),
+            None => self.repos.head_revision(project)?,
+        };
+        Ok(Arc::new(Held(
+            self.repos.prepare_workspace(project, &revision)?,
+        )))
+    }
+}
+
 /// 求值链的接头。
 ///
 /// ⚠️ **它存在的唯一理由是一个真实的环**:`WriteEngine` 要求值链，
@@ -462,45 +500,6 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
     let concurrency = Arc::new(xops_task::Concurrency::default());
     let slots = Arc::new(xops_dispatch::Slots::new(Arc::clone(&concurrency)));
 
-    // 接上测试执行那条链（`SKL-003`）。**没有它技能发布不了**——
-    // 发布要一次成功的测试执行，而那次执行的入口在这里。
-    let skills = Arc::new(
-        Skills::new(
-            Arc::clone(&engine),
-            Arc::clone(&store),
-            Arc::clone(&audit),
-            Arc::clone(&directory),
-            Arc::clone(&clock),
-        )
-        .with_test_runner(Arc::new(
-            xops_dispatch::dispatch::TestRuns::new(Arc::clone(&exec), Arc::clone(&clock))
-                .with_concurrency(Arc::clone(&concurrency)),
-        )),
-    );
-
-    let dispatcher = Arc::new(
-        Dispatcher::new(
-            Arc::clone(&tasks),
-            Arc::clone(&skills),
-            Arc::clone(&exec),
-            Arc::clone(&audit),
-            Arc::clone(&store),
-            Arc::clone(&clock),
-        )
-        .with_concurrency(Arc::clone(&slots)),
-    );
-    let schedules = Arc::new(xops_dispatch::schedule_store::Schedules::new(
-        Arc::clone(&store),
-        Arc::clone(&audit),
-    ));
-    // ② 到点了去点它。**没有它 `schedule.configure` 存得进去、永不触发。**
-    let ticker = Arc::new(xops_dispatch::schedule_store::Ticker::new(
-        Arc::clone(&schedules),
-        Arc::clone(&tasks),
-        Arc::clone(&dispatcher),
-        Arc::clone(&clock),
-    ));
-
     // ⑥ 仓绑定。密钥从环境来 —— **没有它这一步就起不来**，见 `Config::from_env`。
     let sealer = Arc::new(Sealer::from_hex(&config.secret_key)?);
     let repos = Arc::new(Repos::new(
@@ -514,6 +513,53 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         Arc::clone(&sealer),
         Arc::new(xops_repo::GitHub) as Arc<dyn xops_repo::GitPlatform>,
         config.workspaces.clone(),
+    ));
+
+    // 备工作区那条链。**两条路都要接**:正式触发一条，技能试跑一条——
+    // 试跑与正式执行走的是同一条路，少接一条就等于"能发布的技能跑不了"。
+    let workspaces = Arc::new(Workspaces {
+        repos: Arc::clone(&repos),
+    }) as Arc<dyn xops_dispatch::WorkspaceSource>;
+
+    // 接上测试执行那条链（`SKL-003`）。**没有它技能发布不了**——
+    // 发布要一次成功的测试执行，而那次执行的入口在这里。
+    let skills = Arc::new(
+        Skills::new(
+            Arc::clone(&engine),
+            Arc::clone(&store),
+            Arc::clone(&audit),
+            Arc::clone(&directory),
+            Arc::clone(&clock),
+        )
+        .with_test_runner(Arc::new(
+            xops_dispatch::dispatch::TestRuns::new(Arc::clone(&exec), Arc::clone(&clock))
+                .with_concurrency(Arc::clone(&concurrency))
+                .with_workspaces(Arc::clone(&workspaces)),
+        )),
+    );
+
+    let dispatcher = Arc::new(
+        Dispatcher::new(
+            Arc::clone(&tasks),
+            Arc::clone(&skills),
+            Arc::clone(&exec),
+            Arc::clone(&audit),
+            Arc::clone(&store),
+            Arc::clone(&clock),
+        )
+        .with_concurrency(Arc::clone(&slots))
+        .with_workspaces(Arc::clone(&workspaces)),
+    );
+    let schedules = Arc::new(xops_dispatch::schedule_store::Schedules::new(
+        Arc::clone(&store),
+        Arc::clone(&audit),
+    ));
+    // ② 到点了去点它。**没有它 `schedule.configure` 存得进去、永不触发。**
+    let ticker = Arc::new(xops_dispatch::schedule_store::Ticker::new(
+        Arc::clone(&schedules),
+        Arc::clone(&tasks),
+        Arc::clone(&dispatcher),
+        Arc::clone(&clock),
     ));
 
     // ⑦ 插件。**出网后端没接就是 `Denied`**：声明了出网的插件也发不出去，
@@ -731,8 +777,11 @@ fn embedded_engine(config: &Config, key: &str) -> Result<Arc<dyn Engine>> {
     let model: Arc<dyn attacore_core::interface::model::Model> = Arc::new(
         attacore_model::adapter::AnthropicModel::new(Arc::new(client)),
     );
+    // ⚠️ **场景决定 agent 手上有哪些工具，而那就是这次执行的可见范围**（`I-I`）。
+    // 引擎自带的 `CodingScene` 配了 Bash / Write / 子代理，三样各违一条——
+    // 理由写在 `xops_exec::scene` 的模块注释里，那是实测撞出来的。
     let scene: Arc<dyn attacore_core::interface::scene::AgentScene> =
-        Arc::new(attacore_scene::scene::coding::CodingScene);
+        Arc::new(xops_exec::scene::SkillScene);
     let settings = Arc::new(EmbeddedEngine::settings(&config.model));
     Ok(Arc::new(EmbeddedEngine::new(scene, model, settings)?))
 }

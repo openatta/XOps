@@ -613,6 +613,16 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - `Runtime` 与具体引擎之间的口子。**不是对外契约**——对外那条里不出现引擎。
 - `healthy()` 是 `EXE-030` 的依据；`run()` 必须盯着 `Cancel`，因为
   "超时终止不得留下孤儿会话继续消耗模型额度"只有引擎这一侧做得到。
+- 进程内那版（`EmbeddedEngine`）把 `capabilities.workspace` 变成这一次执行的
+  `Settings.paths`，agent 的工作目录因此是那份只读工作区。
+- ⚠️ **这条线在 `D61` 把引擎搬进程时断过。** 两进程那版是把工作区当
+  `session.create` 的 `project_root` 传过去的；搬进程之后这一步没跟过来，
+  于是 agent 的工作目录一直是 `local_data_dir` 的默认值 `"."`——
+  **xopsd 进程自己的 cwd**。后果是声明了 `needsRepository` 的技能读的是
+  XOps 的源码目录，**而且不报错**：它确实读到了东西，只是读错了地方。
+- 过程记录里每条事件的名字取自序列化后的 tag `kind`。早先读的是 `type`，
+  永远读不到，于是 `_runs.trace` 是七十几行字面量 `event`——
+  不报错、不为空、**什么也没说**（`EXE-022`）。
 
 ### Element: rust:xops-exec#Runtime
 - module: xops-exec
@@ -677,6 +687,14 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   声明会撒谎，也会过期。
 - ⚠️ **分不清是不是只读时一律报错，不猜**：只有"被拒绝"才算只读，"仓不存在""连不上"不算。
 - `verify_webhook` 留给 RP-13（GitHub 的 `X-Hub-Signature-256`，HMAC-SHA256 + 等时比较）。
+- `probe_write_access` 对 `file://` 走 `rust:xops-repo#local` 那条判定——
+  **只读证明是按传输方式定的，不是按平台定的**。
+- **试写在一个临时空仓里做，不在 xopsd 自己的 cwd 里做。** 早先没设工作目录，
+  两个后果都是真的：① cwd 不是 git 仓时（从 `/var/lib/xops` 起进程），
+  git 报 "not a git repository"，那句话不匹配任何一个"被拒绝"的关键词 →
+  落到"试写没能得出结论" → **绑定必失败**，而失败的原因与那个仓无关；
+  ② cwd 是 git 仓时（从源码目录起），推的是 **XOps 自己的 HEAD**，
+  拿去和第三方服务器协商。dry-run 不写东西，但源不该是这个。
 
 ### Element: rust:xops-repo#Binding
 - module: xops-repo
@@ -690,6 +708,11 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   而 webhook 端点是无凭据的公网入口。**密钥的作用面不能比它守的东西大。**
 - 没设就是**这个项目收不到 webhook**，与没绑仓一样回"不存在"（`TRG-012`）。
 - 存的时候 `#[serde(default)]`：**存量绑定读得回来**，读回来是"没设"。
+- **新增** `webhook_secret` 之外，`credential` 变成可空：**本地仓没有凭据**。
+  它不是"忘了填"——本地仓的取用不经过任何认证，也就没有可轮换、可泄漏、可过期的东西。
+  让它必填、由调用方塞一个占位串进来更糟：**那是往一个专放密钥的字段里放垃圾**，
+  而 `repo.rotate` 会把那串垃圾当成一把真凭据去换。
+- 本地仓的 `platform` 记成 `local`。记成 `github` 会让 `repo.status` 说谎。
 
 ### Element: rust:xops-repo#Repos
 - module: xops-repo
@@ -856,12 +879,22 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - **新增** `with_concurrency`：`EXE-027` 的落点。**没接就等于不限**，所以装配层必须接。
   要不到名额落为 `Outcome::Skipped`——`TSK-008` 的 Queue 说的"由执行层的并发上限兜着"
   兜的就是这里；没有队列可排，所以这一次不提交，下一次触发再来。
+- **新增** `finished(run)`：这次执行结束了，把它攥着的工作区放掉。
+  由 `Reaper` 在落账之后调，**落账失败不放**——那次重来还要读同一份代码。
+  它不是注入位，是这个类型自己的账：从 `submit` 返回到 `Reaper` 发现它跑完，
+  中间没有任何人天然持有那份工作区。
 
 ### Element: rust:xops-dispatch#WorkspaceSource
 - module: xops-dispatch
 - consumers: [RP-08, xopsd]
 - 「按修订备一份只读工作区」的注入位。**分开是因为那条验收：不依赖 RP-08 也能跑通**——
   声明"不需要代码仓"的技能，全链路正常，而且**连问都不问一次**。
+- ⚠️ **这条缝以前一处实现都没有**，于是声明了 `needsRepository` 的技能
+  **两条路都跑不了**：正式触发拿不到工作区，试跑也拿不到（而发布要一次成功的试跑）。
+  那条枚举验收当时没抓住它，因为它数的是字符串 `GitPlatform`，
+  而那个词因为别的原因也在装配层里——**数名字不如数接口**。
+- `prepare` 交回 `rust:xops-dispatch#PreparedWorkspace`，不是 `PathBuf`。
+- `revision` 是 `None` 时由实现方解出**那个仓此刻的确切修订**（`RPO-010`）。
 
 ### Element: rust:xops-dispatch#assemble
 - module: xops-dispatch
@@ -1663,3 +1696,47 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - ⚠️ **一次投递最多命中一个项目。** 平台级一把密钥的那版是发给**所有**绑过仓的项目的——
   A 仓的一次 push 会触发 B 项目的任务。
 - **没验过不是错误**，是 `Ok(None)`——调用方对两者的回应必须一样。
+
+### Element: rust:xops-repo#local
+- module: xops-repo
+- consumers: [xopsd]
+- 本地仓（`file://`）的只读判定。**问操作系统，不是推一次。**
+- ⚠️ **远端那条路在本地是静默失效的**，实测：`git push --dry-run` 走 `file://` 时，
+  目标目录只读也返回 0。照远端那条判，本地仓**永远**被判成"写得进去"——
+  而如果为了让它过而放宽判定，放宽掉的正是 `RPO-013` 本身。
+- 本地的"写不进去"是**这个进程写不了那个目录**：同样是一次真的判定，同样不靠声明。
+  而且更硬——远端那条靠服务端此刻的授权，这条靠文件系统权限位。
+- 判的是"能不能写"而不是"是不是 root"：以 root 跑的 xopsd 写得了任何目录，
+  所以这条在 root 下一律说"写得进去"→ 绑不上。**那是对的。**
+- 真去建一个文件，不读权限位算一遍：算出来的"应该能写"会在只读挂载、ACL、
+  不可变属性上对不上，而**每一次对不上都是往错的方向对**。
+
+### Element: rust:xops-repo#Repos::head_revision
+- module: xops-repo
+- consumers: [xopsd]
+- 这个仓此刻的确切修订（默认分支的头）。
+- ⚠️ **解出来的是一个 sha，不是 `HEAD`。** `RPO-010` 要回答的是"这份报告针对哪版代码"，
+  而 `HEAD` 明天指向别处——一次执行的追溯链不能挂在一个会动的名字上。
+  触发方没指定修订时走这条，**解完就钉住**。
+
+### Element: rust:xops-dispatch#PreparedWorkspace
+- module: xops-dispatch
+- consumers: [RP-08, xopsd]
+- 一份备好的、**还活着的**只读工作区。
+- ⚠️ **交路径不交所有权是不行的**：那份工作区析构即销毁（`RPO-009`），
+  只交一个 `PathBuf` 出去，备它的那一侧一放手，**执行还没开始目录就没了**。
+  所以这条缝交的是一个要被攥住的东西，谁用谁攥着。
+
+### Element: rust:xops-exec#scene
+- module: xops-exec
+- consumers: [xopsd]
+- 技能执行的场景。**场景决定 agent 手上有哪些工具，而那就是这次执行的可见范围**
+  （`EXE-012` + `I-I`）——所以工具集是只读那三样：`Read` / `Glob` / `Grep`。
+- 引擎自带的 `CodingScene` 配了 `Bash`、`Write` 与**子代理**，三样各违一条：
+  `Bash` 裸跑下根本不在（`D58`）· `Write` 绕过 `EXE-023` 的 schema 校验 ·
+  子代理不在这次执行的账里（token 不计入 `TSK-005`，产出不回到正文）。
+- ⚠️ **最后那条是实测撞出来的**：让技能"读一个文件并回复内容"，
+  模型先试 `Bash`（不在）、再派子代理（产出没回来），最后回一句"我没有 shell 工具"。
+  **执行是"成功"的，产出里一个字有用的都没有。**
+- 不放 `WebFetch` / `WebSearch`：网络白名单是**按技能声明**的（`EXE-012`），
+  而工具白名单是按场景的——一个按场景放行的出网工具，等于每个技能都隐式拿到出网能力。

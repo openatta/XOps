@@ -98,9 +98,17 @@ print(json.dumps({"project": sys.argv[1], "name": "找口令",
                   "maxDurationMillis": 180000}}, ensure_ascii=False))
 EOP
 )" | 取 skill)
-READRUN=$(mcp skill.test "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1,\"inputs\":\"{}\"}")
+# ⚠️ **重试挡的是模型的服从性，不是链路的对错**——见 lib/mcp.sh 里那段。
+OUT=""
+TRY=1
+while [ $TRY -le 3 ]; do
+  READRUN=$(mcp skill.test "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1,\"inputs\":\"{}\"}")
+  OUT=$(echo "$READRUN" | 取 output)
+  case "$OUT" in *"$TOKENWORD"*) break ;; esac
+  [ $TRY -lt 3 ] && 再试一遍 "模型这次没把口令读出来" "$TRY"
+  TRY=$((TRY + 1))
+done
 要 "跑成了" "$(echo "$READRUN" | 取 succeeded)" "True"
-OUT=$(echo "$READRUN" | 取 output)
 含 "产出里有只有那个仓才有的口令" "$OUT" "$TOKENWORD"
 不含 "工具调用没被当成文本吐出来" "$OUT" "DSML"
 不含 "引擎的回合旁白不进产出" "$OUT" "used tools:"
@@ -138,31 +146,59 @@ EOP
 )" | 取 skill)
 
 # 试跑**照那张表的形状收行，但不落表**——试跑没有任务，也就没有 writes。
-TESTED=$(mcp skill.test "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1,\"table\":\"notes\",\"inputs\":\"{}\"}")
-要 "试跑收得下行" "$(echo "$TESTED" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("rows",[])))')" "2"
-要 "但没有落表" "$(mcp row.notes.select "{\"project\":\"$PROJ\"}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("rows",[])))')" "0"
+数行() { python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("rows",[])))'; }
+GOT=0
+TRY=1
+while [ $TRY -le 3 ]; do
+  TESTED=$(mcp skill.test "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1,\"table\":\"notes\",\"inputs\":\"{}\"}")
+  GOT=$(echo "$TESTED" | 数行)
+  [ "$GOT" -ge 2 ] && break
+  [ $TRY -lt 3 ] && 再试一遍 "模型这次只交回 $GOT 行" "$TRY"
+  TRY=$((TRY + 1))
+done
+要 "试跑收得下行" "$GOT" "2"
+要 "但没有落表" "$(mcp row.notes.select "{\"project\":\"$PROJ\"}" | 数行)" "0"
 
 mcp skill.publish "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1}" >/dev/null
 ARGS="{\"project\":\"$PROJ\",\"name\":\"交行\",\"skill\":\"$SKILL\",\"skillVersion\":1,\"writes\":[\"notes\"]}"
 TASK=$(mcp task.create "$ARGS" | 取 task)
-RUN=$(mcp run.trigger "{\"project\":\"$PROJ\",\"task\":\"$TASK\"}" | 取 run)
-i=0; ST=""
-while [ $i -lt 90 ]; do
-  ST=$(mcp run.status "{\"project\":\"$PROJ\",\"run\":\"$RUN\"}" | 取 status)
-  [ "$ST" = "succeeded" ] || [ "$ST" = "failed" ] && break
-  sleep 2; i=$((i+1))
-done
-要 "正式跑成了" "$ST" "succeeded"
 
-# 落表由 Reaper 那一轮做，等它一下。
-i=0; N=0
-while [ $i -lt 30 ]; do
-  N=$(mcp row.notes.select "{\"project\":\"$PROJ\"}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("rows",[])))')
-  [ "$N" -ge 2 ] && break
-  sleep 1; i=$((i+1))
+# ⚠️ **数的是「这一次执行落了几行」，不是表里一共几行。**
+# 重试会再触发一次，而行是追加的（`TBL-012`）——按 run 数才不会把两次的加在一起，
+# 也才说得上"某一次执行把它交回的行全落下来了"。
+本次落了几行() {
+  mcp row.notes.select "{\"project\":\"$PROJ\"}" | python3 -c '
+import sys, json
+run = sys.argv[1]
+rows = json.load(sys.stdin).get("rows", [])
+print(sum(1 for r in rows if (r["values"].get("writtenBy") or {}).get("run") == run))' "$1"
+}
+
+LANDED=0
+RUN=""
+TRY=1
+while [ $TRY -le 3 ]; do
+  RUN=$(mcp run.trigger "{\"project\":\"$PROJ\",\"task\":\"$TASK\"}" | 取 run)
+  i=0; ST=""
+  while [ $i -lt 90 ]; do
+    ST=$(mcp run.status "{\"project\":\"$PROJ\",\"run\":\"$RUN\"}" | 取 status)
+    [ "$ST" = "succeeded" ] || [ "$ST" = "failed" ] && break
+    sleep 2; i=$((i + 1))
+  done
+  # 落表由 Reaper 那一轮做，等它一下。
+  i=0
+  while [ $i -lt 30 ]; do
+    LANDED=$(本次落了几行 "$RUN")
+    [ "$LANDED" -ge 2 ] && break
+    sleep 1; i=$((i + 1))
+  done
+  [ "$LANDED" -ge 2 ] && break
+  [ $TRY -lt 3 ] && 再试一遍 "这一次执行只落了 $LANDED 行" "$TRY"
+  TRY=$((TRY + 1))
 done
-要 "两行都落进表了" "$N" "2"
-# `TBL-016`：署名是**那次执行**，六项全内联。
-含 "行上署的是那次执行" "$(mcp row.notes.select "{\"project\":\"$PROJ\"}")" "$RUN"
+
+要 "正式跑成了" "$ST" "succeeded"
+# `TBL-016`：署名是**那次执行**，六项全内联 —— 上面按 run 数得出来，本身就是这条。
+要 "这一次交回的两行都落进表了" "$LANDED" "2"
 
 收工

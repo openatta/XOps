@@ -6,7 +6,7 @@ exclude = ["vendor/attacore"]
 members = ["crates/xops-core", "crates/xops-store", "crates/xops-audit", "crates/xops-identity", "crates/xops-mcp", "crates/xops-table", "crates/xops-read", "crates/xops-web", "crates/xops-exec", "crates/xops-repo", "crates/xops-skill", "crates/xops-task", "crates/xops-dispatch", "crates/xops-flow", "crates/xops-settle", "crates/xops-script", "crates/xops-notice", "crates/xops-template", "crates/xops-xforge", "crates/xopsd"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/openatta/XOps"

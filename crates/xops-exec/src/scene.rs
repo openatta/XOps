@@ -41,7 +41,11 @@ pub struct SkillScene;
 
 /// 白名单。**改它等于改一次执行的可见范围**（`I-I`），
 /// 所以它是一个具名常量，不是一段内联的 vec。
-pub const TOOLS: [&str; 3] = ["Read", "Glob", "Grep"];
+///
+/// `EmitRow` 在里面，但它**只在声明了产出行的执行里存在**（`EXE-006`）:
+/// 白名单是和注册表求交集的，没注册就等于没有——
+/// 不产出行的执行里，模型连这个名字都看不见。
+pub const TOOLS: [&str; 4] = ["Read", "Glob", "Grep", crate::emit::NAME];
 
 impl AgentScene for SkillScene {
     fn id(&self) -> &str {
@@ -65,9 +69,11 @@ impl AgentScene for SkillScene {
                 "You run one skill, once, unattended. Nobody is watching and nobody will answer \
                  a question, so never ask one — if something is missing, say so in your final \
                  answer and stop.\n\
-                 You have exactly three tools: Read, Glob, Grep. There is no shell, you cannot \
-                 write files, and you cannot delegate to another agent. Do not plan around \
-                 tools you do not have.\n\
+                 Your tools are Read, Glob and Grep, plus EmitRow when this run is meant to \
+                 produce rows. There is no shell, you cannot write files, and you cannot \
+                 delegate to another agent. Do not plan around tools you do not have.\n\
+                 If EmitRow is available, it is the only way your findings become data: a \
+                 table written in prose is read by people, not stored. Call it once per row.\n\
                  The working directory is a read-only checkout of one repository at one exact \
                  revision. Everything outside it is off limits.\n\
                  Use the tools through the normal tool-call protocol. Never write a tool call \
@@ -119,10 +125,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 工具集就是只读那三样() {
+    fn 工具集就是只读那三样加一个交回行的口() {
         // `EXE-012` + `I-I`:可见范围完全由声明的数据源决定。
         // 多一样都是隐式扩权 —— **这条测试就是那句话的落点**。
-        assert_eq!(SkillScene.tools(), vec!["Read", "Glob", "Grep"]);
+        //
+        // `EmitRow` 是唯一的写向，而它写的是**任务已声明的那张表**（`EXE-031`）,
+        // 不是"多了一处能写的地方"。它只在声明了产出行的执行里被注册。
+        assert_eq!(SkillScene.tools(), vec!["Read", "Glob", "Grep", "EmitRow"]);
     }
 
     #[test]

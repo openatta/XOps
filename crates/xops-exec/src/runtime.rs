@@ -182,6 +182,7 @@ impl ExecContract for Runtime {
                     output: completed.output,
                     trace: completed.trace,
                     tokens_used: completed.tokens_used,
+                    rows: completed.rows,
                     started_at,
                     finished_at: Some(finished_at),
                 },

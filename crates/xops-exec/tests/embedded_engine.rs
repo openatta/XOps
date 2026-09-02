@@ -95,6 +95,7 @@ fn worksheet(instruction: &str) -> Worksheet {
         inputs: String::new(),
         revision: None,
         capabilities: Capabilities::default(),
+        rows_to: None,
         limits: Limits {
             token_budget: 10_000,
             timeout_millis: 30_000,

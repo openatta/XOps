@@ -47,6 +47,20 @@ pub struct Capabilities {
     pub network: Vec<String>,
 }
 
+/// 这次执行的产出行往哪张表交（`EXE-031`）。
+///
+/// ⚠️ **它是给模型看的形状，不是判定。** 权威校验在执行之外（`EXE-023`）——
+/// 把权威移进来等于让技能自己判自己。这里带上列名与类型，
+/// 只是为了让模型**知道该写哪些列**，而不是让它猜:
+/// 一批行里错一列，`EXE-024` 是**整批不入表**，代价太大了。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowTarget {
+    /// 任务声明的那张表（`TSK-004`:未声明的表写不了）。
+    pub table: String,
+    /// `(列名, 类型的一句话)`。
+    pub columns: Vec<(String, String)>,
+}
+
 /// 资源上限（`EXE-008`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
@@ -81,6 +95,10 @@ pub struct Worksheet {
     /// 读的哪个代码修订。
     pub revision: Option<String>,
     pub capabilities: Capabilities,
+    /// 产出行交到哪儿。**`None` 表示这次执行不产出行**——
+    /// 那时连交回行的入口都不存在（`EXE-006`:未声明的一律不提供）。
+    #[serde(default)]
+    pub rows_to: Option<RowTarget>,
     pub limits: Limits,
 }
 
@@ -143,6 +161,7 @@ mod tests {
             inputs: String::new(),
             revision: None,
             capabilities: Capabilities::default(),
+            rows_to: None,
             limits: Limits::default(),
         }
     }

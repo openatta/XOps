@@ -30,6 +30,7 @@ fn worksheet(timeout_millis: u64) -> Worksheet {
         inputs: String::new(),
         revision: None,
         capabilities: Capabilities::default(),
+        rows_to: None,
         limits: Limits {
             timeout_millis,
             ..Limits::default()
@@ -116,6 +117,7 @@ impl Engine for EchoEngine {
             output: worksheet.instruction.clone(),
             trace: "echo".into(),
             tokens_used: 1,
+            rows: Vec::new(),
         })
     }
 }

@@ -33,6 +33,9 @@ pub const fn provenance() -> &'static [(&'static str, &'static str)] {
 
 /// 装配一份派工单。
 ///
+/// `rows_to` 由调用方查好传进来（要读目标表的 schema，本模块不碰表）。
+/// **声明 `output: report` 的技能一律拿不到它**——`EXE-006`:未声明的一律不提供。
+///
 /// # Errors
 /// 技能声明了自定义出网白名单（`TSK-017` / **Q10** 定下来之前不开放）·
 /// 需要代码仓却没有工作区 · 输入不合契约。
@@ -41,6 +44,7 @@ pub fn assemble(
     version: &Version,
     event: &Event,
     workspace: Option<PathBuf>,
+    rows_to: Option<xops_exec::worksheet::RowTarget>,
 ) -> Result<Worksheet> {
     // 再校一次输入。装配这一步是最后一道 —— 任务定义可能是在技能改声明之前写的。
     version.declaration.check_arguments(&task.inputs)?;
@@ -77,6 +81,12 @@ pub fn assemble(
         capabilities: Capabilities {
             workspace,
             network: Vec::new(),
+        },
+        // `EXE-031` / `EXE-006`：**不产出行的执行连这个口都没有。**
+        rows_to: if version.declaration.output == xops_skill::declaration::OutputShape::Rows {
+            rows_to
+        } else {
+            None
         },
         limits: Limits {
             timeout_millis: version.declaration.max_duration_millis,
@@ -146,6 +156,7 @@ mod tests {
             inputs: inputs.to_owned(),
             revision: None,
             capabilities: Capabilities::default(),
+            rows_to: None,
             limits: Limits::default(),
         }
     }

@@ -49,18 +49,6 @@ pub struct EmbeddedEngine {
     scene: Arc<dyn AgentScene>,
     model: Arc<dyn Model>,
     settings: Arc<Settings>,
-    /// 工具注册表。
-    ///
-    /// ⚠️ **不给它，agent 手上一件工具都没有。** `Builder` 拿不到注册表时用的是
-    /// 一个**空的** `InMemoryToolRegistry`——不报错，只是每次请求里的 `tools` 是 `[]`。
-    /// 症状不是"工具调用失败"，而是模型开始**用自己的方式凑合**:
-    /// 有的把工具调用当文本吐出来，有的绕道去解释"我没有 shell 工具"。
-    /// **一次执行看着是成功的，产出里一个字有用的都没有。**
-    ///
-    /// 这里装的是全套内建工具，**能不能用由场景的白名单说了算**
-    /// （`crate::scene::SkillScene`，只留只读那三样）——
-    /// 两层分工:注册表管"这个引擎有什么"，场景管"这次执行准用什么"（`I-I`）。
-    tools: Arc<dyn attacore_core::tool::ToolRegistry>,
     /// 引擎那一侧是 async 的,而 [`Engine::run`] 是同步的——异步由
     /// [`crate::runtime::Runtime`] 负责（`EXE-021`）。这个 runtime 就是那道桥。
     tokio: tokio::runtime::Runtime,
@@ -88,13 +76,42 @@ impl EmbeddedEngine {
     ///     ⚠️ 这一条是实测撞出来的：脚本里排了两个回合，跑一次就少了一个。
     /// ```
     ///
-    /// 调用方当然可以自己造一份 `Settings` 传进来——**但把 `memory_enabled` 打开
-    /// 就等于接受上面那两条**。
+    /// 另一样是**扩展思考**：
+    ///
+    /// ```text
+    /// thinking_mode = Off
+    ///     思考块不进产出，却要在后续每一轮**原样回传**给模型服务
+    ///     （"The `content[].thinking` in the thinking mode must be passed back"）。
+    ///     回传这件事在引擎那一侧，我们管不着——而它一旦漏了，
+    ///     整次执行归为**模型服务错误**，跑到一半才炸。
+    ///     ⚠️ 实测撞出来的：多跑几个回合的技能（读文件 + 逐行交回产出）稳定 400。
+    ///     代价也是实的：思考块烧的 token 算在预算里，而它一个字都不进交付物。
+    /// ```
+    ///
+    /// 调用方当然可以自己造一份 `Settings` 传进来——**但把这两样打开
+    /// 就等于接受上面那几条**。
     #[must_use]
     pub fn settings(default_model: &str) -> Settings {
         let mut settings = Settings::defaults_for(default_model);
         settings.memory_enabled = false;
+        settings.model.thinking_mode = attacore_core::settings::ThinkingMode::Off;
         settings
+    }
+
+    /// 这一次执行的工具。
+    ///
+    /// 内建那一套是**每次现装**的:装一遍是几个 `Arc`，而共用一份的代价是
+    /// `EmitRow` 里攒的行会跨执行串——**把 A 的产出写进 B 的表，还不报错**。
+    fn registry_for(
+        &self,
+        emit: Option<Arc<crate::emit::EmitRow>>,
+    ) -> Arc<dyn attacore_core::tool::ToolRegistry> {
+        let registry = Arc::new(attacore_core::tool::InMemoryToolRegistry::new());
+        attacore_tools::register_builtin_tools(&registry);
+        if let Some(emit) = emit {
+            registry.register(emit);
+        }
+        registry as Arc<dyn attacore_core::tool::ToolRegistry>
     }
 
     /// 这一次执行的配置:**把备好的只读工作区变成 agent 的工作目录**。
@@ -124,9 +141,6 @@ impl EmbeddedEngine {
         model: Arc<dyn Model>,
         settings: Arc<Settings>,
     ) -> xops_core::Result<Self> {
-        let registry = Arc::new(attacore_core::tool::InMemoryToolRegistry::new());
-        attacore_tools::register_builtin_tools(&registry);
-        let tools = registry as Arc<dyn attacore_core::tool::ToolRegistry>;
         let tokio = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -137,7 +151,6 @@ impl EmbeddedEngine {
             scene,
             model,
             settings,
-            tools,
             tokio,
         })
     }
@@ -195,11 +208,25 @@ impl EmbeddedEngine {
         token: tokio_util::sync::CancellationToken,
     ) -> std::result::Result<Completed, (FailureKind, String)> {
         let run = worksheet.run.to_string();
+        // ⚠️ **产出行的入口是这一次执行专有的**（`EXE-031`、`I-M`）:
+        // `EmitRow` 攒的行必须归这一次，串到别人头上就是把 A 的产出写进 B 的表。
+        // 所以注册表按执行建，不是引擎那一份共用的。
+        let emit = worksheet
+            .rows_to
+            .clone()
+            .map(|target| Arc::new(crate::emit::EmitRow::new(target)));
+        let tools = self.registry_for(emit.clone());
+
         let (mut agent, mut events, _input) = Builder::new()
             .scene(Arc::clone(&self.scene))
             .model(Arc::clone(&self.model))
             .settings(self.settings_for(worksheet))
-            .tools(Arc::clone(&self.tools))
+            .tools(tools)
+            // 这次执行准碰哪些路径（`I-I`）。**不接它，引擎默认一律放行**——
+            // 见 `crate::confine` 的模块注释，那是实测撞出来的。
+            .permission(Arc::new(crate::confine::Confine::new(
+                worksheet.capabilities.workspace.clone(),
+            )))
             .session_id(run.clone())
             .build()
             .map_err(|error| (FailureKind::Engine, format!("会话建不起来：{error}")))?;
@@ -239,6 +266,8 @@ impl EmbeddedEngine {
                 output: collected.deliverable(),
                 trace: collected.trace,
                 tokens_used: tokens(&done.usage),
+                // 交回来了，**不代表算数**——校验与落表在执行之外（`EXE-023`）。
+                rows: emit.map(|emit| emit.take()).unwrap_or_default(),
             }),
             Err(error) => {
                 let kind = if token.is_cancelled() {
@@ -412,6 +441,7 @@ mod tests {
             inputs: String::new(),
             revision: None,
             capabilities: crate::worksheet::Capabilities::default(),
+            rows_to: None,
             limits: crate::worksheet::Limits::default(),
         }
     }
@@ -441,18 +471,36 @@ mod tests {
         // 实测撞出来的:让技能读一个文件，回来的是
         // `<｜｜DSML｜｜invoke name="Read">…` 这样一段markup 文本。
         let engine = engine_for_test();
-        let names: Vec<String> = engine
-            .tools
-            .list()
-            .iter()
-            .map(|tool| tool.name().to_owned())
-            .collect();
-        for tool in crate::scene::TOOLS {
+        let 装了 = |emit: Option<Arc<crate::emit::EmitRow>>| -> Vec<String> {
+            engine
+                .registry_for(emit)
+                .list()
+                .iter()
+                .map(|tool| tool.name().to_owned())
+                .collect()
+        };
+
+        let 不产出行 = 装了(None);
+        for tool in ["Read", "Glob", "Grep"] {
             assert!(
-                names.iter().any(|name| name == tool),
-                "注册表里没有 {tool} —— 场景白名单再对也放行不出东西来。有的是 {names:?}"
+                不产出行.iter().any(|name| name == tool),
+                "注册表里没有 {tool} —— 场景白名单再对也放行不出东西来。有的是 {不产出行:?}"
             );
         }
+        // `EXE-006`：**未声明的一律不提供。** 不产出行的执行里，
+        // 模型连 `EmitRow` 这个名字都不该看见。
+        assert!(
+            !不产出行.iter().any(|name| name == crate::emit::NAME),
+            "不产出行的执行不该有交回行的口"
+        );
+
+        let 产出行 = 装了(Some(Arc::new(crate::emit::EmitRow::new(
+            crate::worksheet::RowTarget {
+                table: "findings".into(),
+                columns: vec![("note".into(), "文本".into())],
+            },
+        ))));
+        assert!(产出行.iter().any(|name| name == crate::emit::NAME));
     }
 
     #[test]

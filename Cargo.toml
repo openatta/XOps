@@ -50,6 +50,8 @@ attacore-model = { package = "model", path = "vendor/attacore/crates/model" }
 attacore-scene = { package = "scene", path = "vendor/attacore/crates/scene" }
 attacore-core = { package = "base", path = "vendor/attacore/crates/core" }
 attacore-tools = { package = "tools", path = "vendor/attacore/crates/tools" }
+# 引擎那几个 trait 是 async 的，实现它们要同一个宏。
+async-trait = "0.1"
 # 嵌了 AttaCore 就把 tokio 一起带进来了。
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-util = "0.7"

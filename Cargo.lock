@@ -3628,6 +3628,7 @@ dependencies = [
 name = "xops-exec"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base",
  "model",
  "runtime",

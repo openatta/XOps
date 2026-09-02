@@ -21,6 +21,7 @@ use xops_exec::{ExecContract, Status};
 use xops_identity::UserId;
 use xops_skill::Skills;
 use xops_store::Store;
+use xops_table::Tables;
 use xops_task::{Overlap, Task, TaskId, Tasks};
 
 use crate::event::{Event, EventKind, Trigger};
@@ -62,6 +63,59 @@ pub struct TriggerRecord {
     pub outcome: Outcome,
 }
 
+/// 这次执行的产出行往哪张表交（`EXE-031`）。
+///
+/// ⚠️ **一次执行只写一张表**——任务声明的第一张（`TSK-004`:未声明的表写不了）。
+/// 多表留到有真需求时再说:现在 `Landing::validate_rows` 也只看第一张，
+/// 两处口径一致比"看着更通用"值钱。
+///
+/// 拿不到 schema 时**返回 `None`,不报错**:那时这次执行没有交回行的口，
+/// 落账那一侧照样会按 `EXE-024` 判——**判定的权威不在这儿**。
+fn row_target(
+    tables: &Tables,
+    task: &Task,
+    version: &xops_skill::Version,
+) -> Option<xops_exec::worksheet::RowTarget> {
+    if version.declaration.output != xops_skill::declaration::OutputShape::Rows {
+        return None;
+    }
+    let target = task.writes.first()?;
+    let schema = tables.describe_internal(Some(task.project), target).ok()?;
+    Some(xops_exec::worksheet::RowTarget {
+        table: target.to_string(),
+        columns: schema
+            .columns
+            .iter()
+            .filter(|column| !xops_table::AUTO_COLUMNS.contains(&column.name.as_str()))
+            .map(|column| (column.name.clone(), column.ty.describe()))
+            .collect(),
+    })
+}
+
+/// 试跑照哪张表的形状收行（`EXE-031`）。
+///
+/// ⚠️ 与 [`row_target`] 分开写是有意的:那一条读的是**任务声明的表**，
+/// 这一条读的是**调用方在试跑时指定的表**。两者来源不同，
+/// 合成一个函数就会让"试跑能写任务没声明的表吗"这个问题变得含糊——
+/// 答案是**试跑根本不写表**。
+fn test_row_target(
+    tables: &Tables,
+    project: xops_identity::ProjectId,
+    table: &str,
+) -> Option<xops_exec::worksheet::RowTarget> {
+    let id = xops_table::TableId::user(table).ok()?;
+    let schema = tables.describe_internal(Some(project), &id).ok()?;
+    Some(xops_exec::worksheet::RowTarget {
+        table: id.to_string(),
+        columns: schema
+            .columns
+            .iter()
+            .filter(|column| !xops_table::AUTO_COLUMNS.contains(&column.name.as_str()))
+            .map(|column| (column.name.clone(), column.ty.describe()))
+            .collect(),
+    })
+}
+
 /// 事件分发层。
 ///
 /// **RP-13 往这里接两类事件源，RP-14 往这里塞「节点被激活」**——
@@ -73,6 +127,11 @@ pub struct Dispatcher {
     audit: Arc<AuditLog>,
     store: Arc<dyn Store>,
     clock: Arc<dyn Clock>,
+    /// 查目标表的 schema，好把产出行的形状告诉模型（`EXE-031`）。
+    ///
+    /// ⚠️ **它是构造参数，不是注入位。** 这一版有一长串"注入位没人填"的教训:
+    /// 少接一个不报错，只是那条链静默地不生效。**能做成必填就别做成可选。**
+    tables: Arc<Tables>,
     /// 需要代码仓时，工作区从哪来。**没接就等于"不提供"**（`I-I`）。
     workspaces: Option<Arc<dyn WorkspaceSource>>,
     /// 并发名额（`EXE-027`）。**没接就等于不限**——所以装配层必须接。
@@ -186,6 +245,7 @@ impl Dispatcher {
         audit: Arc<AuditLog>,
         store: Arc<dyn Store>,
         clock: Arc<dyn Clock>,
+        tables: Arc<Tables>,
     ) -> Self {
         Self {
             tasks,
@@ -194,6 +254,7 @@ impl Dispatcher {
             audit,
             store,
             clock,
+            tables,
             workspaces: None,
             slots: None,
             held: Mutex::new(HashMap::new()),
@@ -331,6 +392,7 @@ impl Dispatcher {
             &version,
             event,
             workspace.as_ref().map(|held| held.path().to_path_buf()),
+            row_target(&self.tables, task, &version),
         )?;
         let run = self.exec.submit(worksheet)?;
         if let (Some(slots), Some(permit)) = (self.slots.as_ref(), permit) {
@@ -507,6 +569,7 @@ type _UserLink = UserId;
 /// 计不计数不该取决于是谁点的。它自己等到跑完，所以名额是个局部变量。
 pub struct TestRuns {
     exec: Arc<dyn ExecContract>,
+    tables: Arc<Tables>,
     workspaces: Option<Arc<dyn WorkspaceSource>>,
     clock: Arc<dyn Clock>,
     concurrency: Option<Arc<xops_task::Concurrency>>,
@@ -527,9 +590,10 @@ impl TestRuns {
     }
 
     #[must_use]
-    pub fn new(exec: Arc<dyn ExecContract>, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(exec: Arc<dyn ExecContract>, clock: Arc<dyn Clock>, tables: Arc<Tables>) -> Self {
         Self {
             exec,
+            tables,
             workspaces: None,
             concurrency: None,
             clock,
@@ -549,6 +613,7 @@ impl xops_skill::service::TestRunner for TestRuns {
         actor: UserId,
         version: &xops_skill::skill::Version,
         inputs: &serde_json::Value,
+        table: Option<&str>,
     ) -> Result<xops_skill::service::TestOutcome> {
         // ⚠️ **一个不落库的任务。** 测试执行不该在账上留下一个任务对象——
         // 它是作者的一次试跑，不是一条自动化。派工单装配要一个任务，所以这里造一个，
@@ -608,6 +673,9 @@ impl xops_skill::service::TestRunner for TestRuns {
             version,
             &event,
             workspace.as_ref().map(|held| held.path().to_path_buf()),
+            // 试跑照着调用方指定的那张表的形状收行，**收下来但不落表**
+            // （`EXE-031`）:试跑没有任务、也就没有 writes。
+            table.and_then(|table| test_row_target(&self.tables, version.project, table)),
         )?;
         let timeout = worksheet.limits.timeout_millis;
         let run = self.exec.submit(worksheet)?;
@@ -641,6 +709,7 @@ impl xops_skill::service::TestRunner for TestRuns {
                     outcome.trace.chars().take(500).collect::<String>()
                 )
             },
+            rows: outcome.rows,
             output: outcome.output,
         })
     }
@@ -786,7 +855,9 @@ impl Reaper {
             triggered_by: task.created_by.to_string(),
             started_at: outcome.started_at,
             finished_at: outcome.finished_at,
-            rows: Vec::new(),
+            // `EXE-031`：技能交回来的行。**校验与落表在这一侧**（`EXE-023`：容器之外）——
+            // `Landing` 会按 `EXE-024` 判:schema 不过整批不入表、执行归为技能错误类。
+            rows: outcome.rows.clone(),
         };
         // 署名是**那次执行**，六项全内联（`TBL-016`）。
         let written_by = xops_table::WrittenBy::Execution {

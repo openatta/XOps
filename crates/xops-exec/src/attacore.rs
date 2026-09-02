@@ -230,10 +230,13 @@ impl Engine for AttaCoreEngine {
         if tokens_used > worksheet.limits.token_budget {
             return Err((FailureKind::TokenBudget, trace));
         }
+        // ⚠️ **两进程那版还交不回产出行**（`EXE-031`）：行要随会话结果带回来，
+        // 而 attacored 的协议上还没有这一段。接容器后端时与 `TSK-006` ② 一并做。
         Ok(Completed {
             output,
             trace,
             tokens_used,
+            rows: Vec::new(),
         })
     }
 }
@@ -281,6 +284,7 @@ mod tests {
             inputs: "上下文".into(),
             revision: None,
             capabilities: Capabilities::default(),
+            rows_to: None,
             limits: Limits::default(),
         }
     }

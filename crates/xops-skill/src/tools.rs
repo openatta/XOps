@@ -313,6 +313,13 @@ skill_tool!(
             FieldType::Text { max_len: 4096 },
             "这次测试的输入（JSON 文本）。**必须满足技能的输入契约**——\
              带着不合契约的输入跑起来，等于把「测过了」记在一次不算数的执行上",
+        ))
+        .field(Field::optional(
+            "table",
+            FieldType::Text { max_len: 32 },
+            "产出行**照着哪张表的形状**试（EXE-031）。试跑没有任务、也就没有 writes，\
+             所以这张表由你指定；它**只用来告诉模型该写哪些列，不落表**。\
+             声明 output: rows 的技能不给它，等于没试到它的主路",
         )),
     Action::WriteSkill,
     Idempotency::NotIdempotent {
@@ -328,12 +335,16 @@ skill_tool!(
             SkillId::from_id(context.id("skill")?),
             version_of(context)?,
             &inputs,
+            context.arg("table").and_then(Value::as_str),
         )?;
         Ok(json!({
             "run": outcome.run,
             "succeeded": outcome.succeeded,
             "detail": outcome.detail,
             "output": outcome.output,
+            // 试跑**不落表**，但"模型写的行长什么样"要看得见（`EXE-031`）——
+            // 一批行里错一列，正式跑起来是整批不入表（`EXE-024`）。
+            "rows": outcome.rows,
         }))
     }
 );

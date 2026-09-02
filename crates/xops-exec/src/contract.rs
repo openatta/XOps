@@ -52,6 +52,10 @@ pub struct Outcome {
     /// 过程记录，**至少含原始输出流**（`EXE-022`）。落 `_runs.trace`。
     pub trace: String,
     pub tokens_used: u64,
+    /// 技能交回的产出行（`EXE-031`）。**权威校验不在这里**——
+    /// 它在 `xops_task::landing`，那是"容器之外"（`EXE-023`）。
+    #[serde(default)]
+    pub rows: Vec<serde_json::Value>,
     pub started_at: Timestamp,
     pub finished_at: Option<Timestamp>,
 }
@@ -73,6 +77,7 @@ impl Outcome {
             output: String::new(),
             trace: trace.into(),
             tokens_used: 0,
+            rows: Vec::new(),
             started_at,
             finished_at: Some(finished_at),
         }

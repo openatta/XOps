@@ -11,8 +11,10 @@
 //! 归属：RP-07。
 
 pub mod attacore;
+pub mod confine;
 pub mod contract;
 pub mod embedded;
+pub mod emit;
 pub mod engine;
 pub mod failure;
 pub mod provider;

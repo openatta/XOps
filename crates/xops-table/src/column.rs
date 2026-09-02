@@ -53,6 +53,26 @@ pub enum ColumnType {
 }
 
 impl ColumnType {
+    /// 一句话说清这一列要什么。**给模型看的**（`EXE-031`），不是给校验用的。
+    ///
+    /// 枚举要把取值列出来:模型猜不出来，而猜错一格 `EXE-024` 是**整批不入表**。
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Text { max_len } => format!("文本，最长 {max_len}"),
+            Self::LongText { max_len } => format!("长文本，最长 {max_len}"),
+            Self::Integer => "整数".into(),
+            Self::Decimal => "小数".into(),
+            Self::Bool => "true / false".into(),
+            Self::Timestamp => "UTC 毫秒".into(),
+            Self::Enum { values } => format!("只能是：{}", values.join(" / ")),
+            Self::Sequence => "序号，由平台补".into(),
+            Self::RowRef => "另一行的标识".into(),
+            Self::Blob { .. } => "二进制".into(),
+            Self::Derived { .. } => "派生列，由平台算".into(),
+        }
+    }
+
     /// 用户能不能直接写这一列。
     ///
     /// 自增序号与派生文本是平台算的——用户写它们，等于让平台的账由调用方说了算。

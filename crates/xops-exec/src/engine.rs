@@ -36,6 +36,9 @@ pub struct Completed {
     /// 原始输出流（`EXE-022`）。
     pub trace: String,
     pub tokens_used: u64,
+    /// 技能交回的产出行（`EXE-031`）。**只是"交回来了"，不是"算数"**——
+    /// 校验与落表在执行之外（`EXE-023`、`EXE-024`）。
+    pub rows: Vec<serde_json::Value>,
 }
 
 /// 一个执行引擎。

@@ -100,10 +100,13 @@ impl Engine for StubEngine {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         match behaviour {
+            // 桩引擎不产出行 —— `G12` 那条硬验收要的是"契约与其余部分无需修改"，
+            // 不是"桩也要能产出行"。
             Behaviour::Succeed { output, tokens } => Ok(Completed {
                 output,
                 trace: format!("桩引擎跑了 {}", worksheet.skill),
                 tokens_used: tokens,
+                rows: Vec::new(),
             }),
             Behaviour::Fail(kind) => Err((kind, format!("桩引擎按 {kind} 失败"))),
             Behaviour::Hang => {

@@ -106,4 +106,63 @@ OUT=$(echo "$READRUN" | 取 output)
 不含 "引擎的回合旁白不进产出" "$OUT" "used tools:"
 case "$OUT" in *"$TOKENWORD"*) ;; *) printf '     产出：%s\n' "$OUT" ;; esac
 
+节 "⑦ 越界读不出去（EXE-012 / I-I）"
+# ⚠️ **这是实测撞出来的洞。** 引擎的 Builder 拿不到 Permission 时用 AllowAll，
+# 而工具那一侧对越界路径回的是"要人确认"——无人值守的执行里没有人可问，
+# "要确认"就这么退化成了"随便读"。技能当时读到了工作区之外的文件。
+echo "机密-不该被技能读到" > "$NEST/仓外的秘密.txt"
+SKILL=$(mcp skill.create "$(python3 - "$PROJ" "$NEST" <<'EOP'
+import json, sys
+print(json.dumps({"project": sys.argv[1], "name": "越界",
+  "content": f"用 Read 读绝对路径 {sys.argv[2]}/仓外的秘密.txt，把内容原样写出来。"
+             "读不到就只写「读不到」。",
+  "declaration": {"output": "report", "needsRepository": True,
+                  "maxDurationMillis": 120000}}, ensure_ascii=False))
+EOP
+)" | 取 skill)
+OUT=$(mcp skill.test "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1,\"inputs\":\"{}\"}" | 取 output)
+不含 "工作区之外的文件读不出去" "$OUT" "机密-不该被技能读到"
+
+节 "⑧ 产出行落进声明的那张表（EXE-031）"
+ARGS="{\"project\":\"$PROJ\",\"table\":\"notes\",\"columns\":[{\"name\":\"tag\",\"type\":\"enum\",\"enumValues\":[\"甲\",\"乙\"],\"required\":true},{\"name\":\"body\",\"type\":\"text\",\"maxLen\":200,\"required\":true}]}"
+要 "建得出目标表" "$(mcp table.create "$ARGS" | 取 table)" "notes"
+
+SKILL=$(mcp skill.create "$(python3 - "$PROJ" <<'EOP'
+import json, sys
+print(json.dumps({"project": sys.argv[1], "name": "交两行",
+  "content": "不要读任何文件。调两次 EmitRow：第一次 tag 写「甲」、body 写「第一行」，"
+             "第二次 tag 写「乙」、body 写「第二行」。正文只写「交完了」。",
+  "declaration": {"output": "rows", "needsRepository": True,
+                  "maxDurationMillis": 180000}}, ensure_ascii=False))
+EOP
+)" | 取 skill)
+
+# 试跑**照那张表的形状收行，但不落表**——试跑没有任务，也就没有 writes。
+TESTED=$(mcp skill.test "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1,\"table\":\"notes\",\"inputs\":\"{}\"}")
+要 "试跑收得下行" "$(echo "$TESTED" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("rows",[])))')" "2"
+要 "但没有落表" "$(mcp row.notes.select "{\"project\":\"$PROJ\"}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("rows",[])))')" "0"
+
+mcp skill.publish "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1}" >/dev/null
+ARGS="{\"project\":\"$PROJ\",\"name\":\"交行\",\"skill\":\"$SKILL\",\"skillVersion\":1,\"writes\":[\"notes\"]}"
+TASK=$(mcp task.create "$ARGS" | 取 task)
+RUN=$(mcp run.trigger "{\"project\":\"$PROJ\",\"task\":\"$TASK\"}" | 取 run)
+i=0; ST=""
+while [ $i -lt 90 ]; do
+  ST=$(mcp run.status "{\"project\":\"$PROJ\",\"run\":\"$RUN\"}" | 取 status)
+  [ "$ST" = "succeeded" ] || [ "$ST" = "failed" ] && break
+  sleep 2; i=$((i+1))
+done
+要 "正式跑成了" "$ST" "succeeded"
+
+# 落表由 Reaper 那一轮做，等它一下。
+i=0; N=0
+while [ $i -lt 30 ]; do
+  N=$(mcp row.notes.select "{\"project\":\"$PROJ\"}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("rows",[])))')
+  [ "$N" -ge 2 ] && break
+  sleep 1; i=$((i+1))
+done
+要 "两行都落进表了" "$N" "2"
+# `TBL-016`：署名是**那次执行**，六项全内联。
+含 "行上署的是那次执行" "$(mcp row.notes.select "{\"project\":\"$PROJ\"}")" "$RUN"
+
 收工

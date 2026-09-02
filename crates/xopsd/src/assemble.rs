@@ -534,9 +534,13 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
             Arc::clone(&clock),
         )
         .with_test_runner(Arc::new(
-            xops_dispatch::dispatch::TestRuns::new(Arc::clone(&exec), Arc::clone(&clock))
-                .with_concurrency(Arc::clone(&concurrency))
-                .with_workspaces(Arc::clone(&workspaces)),
+            xops_dispatch::dispatch::TestRuns::new(
+                Arc::clone(&exec),
+                Arc::clone(&clock),
+                Arc::clone(&tables),
+            )
+            .with_concurrency(Arc::clone(&concurrency))
+            .with_workspaces(Arc::clone(&workspaces)),
         )),
     );
 
@@ -548,6 +552,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
             Arc::clone(&audit),
             Arc::clone(&store),
             Arc::clone(&clock),
+            Arc::clone(&tables),
         )
         .with_concurrency(Arc::clone(&slots))
         .with_workspaces(Arc::clone(&workspaces)),

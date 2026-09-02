@@ -47,11 +47,18 @@ pub trait TestRunner: Send + Sync + 'static {
     ///
     /// # Errors
     /// 跑失败了，或者根本没跑起来。
+    /// `table` 是产出行**照着哪张表的形状**试（`EXE-031`）。
+    ///
+    /// ⚠️ **试跑没有任务，也就没有 `writes`**——所以这张表由作者在调用时指定，
+    /// 而且**只用来告诉模型该写哪些列，不落表**。
+    /// 不给就等于这次试跑没有交回行的口:声明 `output: rows` 的技能
+    /// 那样试等于**没试到它的主路**，而 `SKL-003` 要的正是"试过了才能发布"。
     fn run(
         &self,
         actor: UserId,
         version: &Version,
         inputs: &serde_json::Value,
+        table: Option<&str>,
     ) -> Result<TestOutcome>;
 }
 
@@ -63,6 +70,14 @@ pub struct TestOutcome {
     /// 失败时它说得出为什么。
     pub detail: String,
     pub output: String,
+    /// 这次试跑**本来会写进表的那些行**（`EXE-031`）。
+    ///
+    /// ⚠️ **只是给作者看，没有落表。** 试跑用的是一张不落库的任务，
+    /// 没有 `writes`，也就没有目标表——`TSK-004` 那条"未声明的表写不了"在这里
+    /// 是自然成立的。但**"模型写的行长什么样"要看得见**:
+    /// 一批行里错一列，正式跑起来是整批不入表（`EXE-024`），
+    /// 而那时人只会看到"执行失败了"。
+    pub rows: Vec<serde_json::Value>,
 }
 
 /// 技能资产。
@@ -126,6 +141,7 @@ impl Skills {
         skill: SkillId,
         version: u32,
         inputs: &serde_json::Value,
+        table: Option<&str>,
     ) -> Result<TestOutcome> {
         self.require_writable(actor, skill)?;
         let record = self.version(skill, version)?;
@@ -137,7 +153,7 @@ impl Skills {
                 "这个部署没有接上执行链，测试执行发起不了——**因而技能也发布不了**（SKL-003）",
             )
         })?;
-        let outcome = tester.run(actor, &record, inputs)?;
+        let outcome = tester.run(actor, &record, inputs, table)?;
         if outcome.succeeded {
             // 事实由本包持有，门也在本包（`SKL-003`）。
             let run = Id::parse(&outcome.run).unwrap_or_else(|_| Id::generate());

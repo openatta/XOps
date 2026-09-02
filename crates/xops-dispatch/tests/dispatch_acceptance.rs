@@ -106,6 +106,18 @@ fn fixture() -> Fixture {
         )
         .with_subscription_check(Arc::new(Whitelist)),
     );
+    // `EXE-031`：派工单要带上"产出行往哪张表交"，所以分发层拿得到表目录。
+    let catalog =
+        Arc::new(xops_table::engine::Catalog::open(Arc::clone(&store), clock.clone()).unwrap());
+    let tables = Arc::new(xops_table::Tables::new(
+        Arc::clone(&write),
+        catalog,
+        Arc::clone(&audit),
+        Arc::clone(&directory),
+        clock.clone(),
+        Arc::clone(&store),
+    ));
+
     let engine = Arc::new(StubEngine::new());
     let exec: Arc<dyn ExecContract> = Arc::new(Runtime::new(
         Arc::clone(&engine) as Arc<dyn xops_exec::Engine>,
@@ -123,6 +135,7 @@ fn fixture() -> Fixture {
             Arc::clone(&audit),
             Arc::clone(&store),
             clock,
+            Arc::clone(&tables),
         )
         .with_workspaces(Arc::clone(&workspaces) as Arc<dyn WorkspaceSource>),
     );
@@ -490,7 +503,7 @@ fn 事件带来的修订覆盖任务定义里的那个() {
     event.revision = Some("abc123".into());
 
     let version = fixture.skills.versions(task.skill).unwrap().remove(0);
-    let worksheet = xops_dispatch::assemble(&task, &version, &event, None).unwrap();
+    let worksheet = xops_dispatch::assemble(&task, &version, &event, None, None).unwrap();
     assert_eq!(worksheet.revision.as_deref(), Some("abc123"));
 }
 
@@ -500,7 +513,8 @@ fn 派工单里没有凭据也没有表数据() {
     let (alice, project, task) = setup(&fixture, false);
     let version = fixture.skills.versions(task.skill).unwrap().remove(0);
     let worksheet =
-        xops_dispatch::assemble(&task, &version, &fixture.manual(project, alice), None).unwrap();
+        xops_dispatch::assemble(&task, &version, &fixture.manual(project, alice), None, None)
+            .unwrap();
 
     assert_eq!(
         looks_like_credential(&worksheet),

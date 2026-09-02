@@ -52,6 +52,21 @@ impl IsolationLevel {
         }
     }
 
+    /// 引擎那一侧的已知缺口。**与隔离无关，所以不在 `unsatisfied` 里**，
+    /// 但同样要在启动时说出来:一个看着像真数、实际少算的预算，
+    /// 比没有预算更糟——**没有预算至少不会有人以为它在管事**。
+    #[must_use]
+    pub const fn engine_gaps() -> &'static [(&'static str, &'static str)] {
+        &[(
+            "TSK-005",
+            concat!(
+                "单次 token 用量是**少算的**：引擎只交回最后一次 API 调用的用量，",
+                "一个回合里前几趟不在这个数里，预算因此咬不住。\n",
+                "               上游拿不出累计数，**这条要走 ISSUE**——见 docs/upstream-issues/",
+            ),
+        )]
+    }
+
     /// 仍然兑现的那几条，也写下来——它们不靠容器。
     #[must_use]
     pub const fn still_held(self) -> &'static [(&'static str, &'static str)] {

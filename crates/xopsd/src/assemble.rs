@@ -50,6 +50,8 @@ pub struct Assembled {
     pub engine_kind: &'static str,
     /// 隔离级别没兑现的那些需求（`D58`、`EXE-029`）。**不静默降级。**
     pub unsatisfied: &'static [(&'static str, &'static str)],
+    /// 引擎那一侧的已知缺口。**与隔离无关**，但同样要在启动时说出来。
+    pub engine_gaps: &'static [(&'static str, &'static str)],
     pub notices: Arc<Notices>,
     pub dispatcher: Arc<Dispatcher>,
     /// 把跑完的执行落成账。**没有它 `_runs` 就是空的**——
@@ -735,6 +737,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         web,
         engine_kind,
         unsatisfied: isolation.unsatisfied(),
+        engine_gaps: xops_exec::IsolationLevel::engine_gaps(),
         notices,
         dispatcher,
         reaper,

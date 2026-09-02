@@ -623,6 +623,19 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 过程记录里每条事件的名字取自序列化后的 tag `kind`。早先读的是 `type`，
   永远读不到，于是 `_runs.trace` 是七十几行字面量 `event`——
   不报错、不为空、**什么也没说**（`EXE-022`）。
+- **进程内那版自带一套工具注册表**（`attacore_tools::register_builtin_tools`）。
+  ⚠️ **不给它，agent 手上一件工具都没有**：`Builder` 拿不到注册表时用的是一个
+  空的 `InMemoryToolRegistry`——不报错，只是每次请求里的 `tools` 是 `[]`。
+  症状不是"工具调用失败"，是模型开始**用自己的方式凑合**：把工具调用当文本吐出来，
+  或者绕道解释"我没有 shell 工具"。**一次执行看着是成功的，产出里一个字有用的都没有。**
+  上游自己的注释里记着 daemon 犯过同一个错。
+- 两层分工：**注册表管"这个引擎有什么"，场景管"这次执行准用什么"**（`I-I`）。
+- 产出正文里**不含引擎的回合旁白**（`[Turn 0 used tools: Read]`）：
+  那是引擎在两个回合之间发的合成 `TextDelta`，和模型写的字走同一个事件。
+  它是引擎的话，不是产出——而 `_runs.output` 是交给人看的那一份。
+  ⚠️ 按上游那句话的形状认的，**上游改一个词它就漏**；出路是上游把它发成
+  另一个事件，那要走 ISSUE。
+- ⚠️ `tokens_used` **是少算的**，见 `rust:xops-exec#IsolationLevel::engine_gaps`。
 
 ### Element: rust:xops-exec#Runtime
 - module: xops-exec
@@ -1385,6 +1398,8 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   `engine_kind`（引擎是真的还是桩）与 `unsatisfied`（裸跑没兑现的八条，`D58`、`EXE-029`）。
 - ⚠️ 它们不是给日志看的，是**启动横幅必须说出来**的东西：
   "以为接了真引擎、其实跑的是桩"是一种查起来很慢的错。
+- **新增** `engine_gaps`：引擎那一侧的已知缺口，与 `unsatisfied` 并列上横幅。
+  同一条道理——**降级要看得见**，而"看着像真数、实际不是"是最难查的那一种。
 
 ### Element: rust:xops-repo#Sealer::from_hex
 - module: xops-repo
@@ -1740,3 +1755,14 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   **执行是"成功"的，产出里一个字有用的都没有。**
 - 不放 `WebFetch` / `WebSearch`：网络白名单是**按技能声明**的（`EXE-012`），
   而工具白名单是按场景的——一个按场景放行的出网工具，等于每个技能都隐式拿到出网能力。
+- 白名单现在**真的在收窄**：注册表里装的是全套内建工具（含 `Bash`/`Write`/`Agent`），
+  场景把它收到只读那三样。在装上注册表之前，这个白名单是在一个空集合上求交集。
+
+### Element: rust:xops-exec#IsolationLevel::engine_gaps
+- module: xops-exec
+- consumers: [xopsd, 部署]
+- 引擎那一侧的已知缺口。**与隔离无关**，所以不在 `unsatisfied` 里，
+  但同样要在启动横幅上说出来。
+- 头一条是 `TSK-005`：单次 token 用量**少算**——引擎只交回最后一次 API 调用的用量，
+  一个回合里前几趟不在这个数里。**一个看着像真数、实际少算的预算，比没有预算更糟**：
+  没有预算至少不会有人以为它在管事。

@@ -15,6 +15,7 @@ attacore-runtime.workspace = true
 attacore-model.workspace = true
 attacore-scene.workspace = true
 attacore-core.workspace = true
+attacore-tools.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 

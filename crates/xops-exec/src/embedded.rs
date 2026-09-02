@@ -49,6 +49,18 @@ pub struct EmbeddedEngine {
     scene: Arc<dyn AgentScene>,
     model: Arc<dyn Model>,
     settings: Arc<Settings>,
+    /// 工具注册表。
+    ///
+    /// ⚠️ **不给它，agent 手上一件工具都没有。** `Builder` 拿不到注册表时用的是
+    /// 一个**空的** `InMemoryToolRegistry`——不报错，只是每次请求里的 `tools` 是 `[]`。
+    /// 症状不是"工具调用失败"，而是模型开始**用自己的方式凑合**:
+    /// 有的把工具调用当文本吐出来，有的绕道去解释"我没有 shell 工具"。
+    /// **一次执行看着是成功的，产出里一个字有用的都没有。**
+    ///
+    /// 这里装的是全套内建工具，**能不能用由场景的白名单说了算**
+    /// （`crate::scene::SkillScene`，只留只读那三样）——
+    /// 两层分工:注册表管"这个引擎有什么"，场景管"这次执行准用什么"（`I-I`）。
+    tools: Arc<dyn attacore_core::tool::ToolRegistry>,
     /// 引擎那一侧是 async 的,而 [`Engine::run`] 是同步的——异步由
     /// [`crate::runtime::Runtime`] 负责（`EXE-021`）。这个 runtime 就是那道桥。
     tokio: tokio::runtime::Runtime,
@@ -112,6 +124,9 @@ impl EmbeddedEngine {
         model: Arc<dyn Model>,
         settings: Arc<Settings>,
     ) -> xops_core::Result<Self> {
+        let registry = Arc::new(attacore_core::tool::InMemoryToolRegistry::new());
+        attacore_tools::register_builtin_tools(&registry);
+        let tools = registry as Arc<dyn attacore_core::tool::ToolRegistry>;
         let tokio = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -122,6 +137,7 @@ impl EmbeddedEngine {
             scene,
             model,
             settings,
+            tools,
             tokio,
         })
     }
@@ -183,6 +199,7 @@ impl EmbeddedEngine {
             .scene(Arc::clone(&self.scene))
             .model(Arc::clone(&self.model))
             .settings(self.settings_for(worksheet))
+            .tools(Arc::clone(&self.tools))
             .session_id(run.clone())
             .build()
             .map_err(|error| (FailureKind::Engine, format!("会话建不起来：{error}")))?;
@@ -219,7 +236,7 @@ impl EmbeddedEngine {
 
         match outcome {
             Ok(done) => Ok(Completed {
-                output: collected.output,
+                output: collected.deliverable(),
                 trace: collected.trace,
                 tokens_used: tokens(&done.usage),
             }),
@@ -250,6 +267,51 @@ impl Collected {
         self.trace.push_str(&describe(event));
         self.trace.push('\n');
     }
+
+    /// 交出产出正文,**去掉引擎的回合旁白**。
+    ///
+    /// 引擎在两个回合之间会发一条合成的 `TextDelta`:`\n[Turn 0 used tools: Read]\n`。
+    /// 它和模型写的正文走同一个事件，收进来的时候分不开——可它是**引擎的话，不是产出**，
+    /// 而 `_runs.output` 是交给人看的那份东西。一份以
+    /// `[Turn 0 used tools: Glob]` 开头的报告，读的人第一眼看到的是我们的实现细节。
+    ///
+    /// ⚠️ **这是按上游那句话的形状认的，上游改一个词它就漏。**
+    /// 真正的出路是上游把这条旁白发成一个**另外的事件**（`EXE-014` 的同一条道理:
+    /// 引擎的概念不该混进产出）——那要走 ISSUE 提过去。在那之前，这里先挡着，
+    /// 而且**只挡整行**:模型正文里正好写了这么一行的可能性可以忽略,
+    /// 混进旁白的代价则是每一份多回合的报告都带着它。
+    fn deliverable(&self) -> String {
+        let kept: Vec<&str> = self
+            .output
+            .lines()
+            .filter(|line| !is_turn_narration(line))
+            .collect();
+        // 旁白前后各带一个换行，摘掉之后会留下一段空白。
+        // 连续空行压成一个 —— Markdown 里一个空行就是一次分段，多的那些只是痕迹。
+        let mut out = String::with_capacity(self.output.len());
+        let mut blanks = 0usize;
+        for line in kept {
+            if line.trim().is_empty() {
+                blanks += 1;
+                continue;
+            }
+            if !out.is_empty() {
+                out.push('\n');
+                if blanks > 0 {
+                    out.push('\n');
+                }
+            }
+            blanks = 0;
+            out.push_str(line);
+        }
+        out
+    }
+}
+
+/// 这一行是不是引擎的回合旁白。
+fn is_turn_narration(line: &str) -> bool {
+    let line = line.trim();
+    line.starts_with("[Turn ") && line.ends_with(']') && line.contains(" used tools: ")
 }
 
 /// 引擎那一侧的失败归到我们这一侧的哪一类。
@@ -301,6 +363,21 @@ fn variant(event: &AgentEvent) -> String {
         .unwrap_or_else(|| "event".to_owned())
 }
 
+/// 这一回合花了多少 token。
+///
+/// ⚠️ **它是少算的，而且现在没法算准。** 引擎交回的 `TurnOutcome.usage` 是
+/// **最后一次 API 调用**的用量，不是整个回合的累计——一个回合里模型可能来回好几趟
+/// （`turn-complete` 那行的 `api=4` 就是四趟），前几趟的 token 不在这个数里。
+///
+/// 实测:同一个技能对同一个仓跑两次，一次报 2817，一次报 365。
+///
+/// **这不是一个显示问题**:`TSK-005` 的单次预算就是拿这个数去比的，
+/// 少算意味着预算根本咬不住。
+///
+/// 引擎那一侧目前拿不出累计数——`AgentEvent` 里只有 `TurnComplete` 带 usage，
+/// 而它带的是同一个最后一次；`ModelInterceptor` 的 `on_message` 看不到 usage。
+/// **所以这条要走 ISSUE 提给上游**（`vendor/attacore` 是只读的），
+/// 在那之前它进启动横幅，和裸跑那八条并列——**降级要看得见**。
 fn tokens(usage: &Usage) -> u64 {
     u64::from(usage.input_tokens) + u64::from(usage.output_tokens)
 }
@@ -351,6 +428,57 @@ mod tests {
         let described = describe(&event);
         assert_ne!(described, "event", "回退到字面量了 —— tag 键名对不上");
         assert_eq!(described, "thinking_delta");
+    }
+
+    #[test]
+    fn 引擎手上真的有工具() {
+        // ⚠️ 这条盯的是一个**不报错**的缺陷:`Builder` 拿不到注册表时用的是一个
+        // 空的 `InMemoryToolRegistry`，于是每次请求里的 `tools` 是 `[]`。
+        // 症状不是"工具调用失败"，是模型开始**用自己的方式凑合**——
+        // 把工具调用当文本吐出来，或者绕道解释"我没有 shell 工具"。
+        // **一次执行看着是成功的，产出里一个字有用的都没有。**
+        //
+        // 实测撞出来的:让技能读一个文件，回来的是
+        // `<｜｜DSML｜｜invoke name="Read">…` 这样一段markup 文本。
+        let engine = engine_for_test();
+        let names: Vec<String> = engine
+            .tools
+            .list()
+            .iter()
+            .map(|tool| tool.name().to_owned())
+            .collect();
+        for tool in crate::scene::TOOLS {
+            assert!(
+                names.iter().any(|name| name == tool),
+                "注册表里没有 {tool} —— 场景白名单再对也放行不出东西来。有的是 {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn 引擎的回合旁白不进产出() {
+        // `[Turn 0 used tools: Glob]` 是引擎在两个回合之间发的合成正文。
+        // 它和模型写的字走同一个事件，可它是**引擎的话，不是产出**——
+        // 一份以它开头的报告，读的人第一眼看到的是我们的实现细节。
+        let mut collected = Collected::default();
+        for text in [
+            "\n[Turn 0 used tools: Glob]\n",
+            "这个仓是计量网关。\n",
+            "\n[Turn 0 used tools: Glob, Read]\n",
+            "共三个模块。",
+        ] {
+            collected.take(&AgentEvent::TextDelta {
+                text: text.into(),
+                turn_id: "t".into(),
+            });
+        }
+        // 旁白摘掉，留下的空白压成一次分段 —— 那个位置本来就是一个回合边界。
+        assert_eq!(
+            collected.deliverable(),
+            "这个仓是计量网关。\n\n共三个模块。"
+        );
+        // 过程记录那一侧照旧全收 —— `EXE-022` 要的就是"出了事能读的东西"。
+        assert_eq!(collected.trace.lines().count(), 4);
     }
 
     #[test]

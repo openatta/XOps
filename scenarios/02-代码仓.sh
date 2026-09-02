@@ -84,4 +84,26 @@ OUT=$(echo "$TESTED" | 取 output | tr -d ' ')
 不含 "不是 xopsd 自己的 cwd（XOps 的源码目录）" "$OUT" "Workspace/XOps"
 case "$OUT" in *"$XOPS_WORKSPACES/ws-"*) ;; *) printf '     产出：%s\n' "$OUT" ;; esac
 
+节 "⑥ 技能真的读得到仓里的文件 —— 这条也断过"
+# ⚠️ 断掉的**同样不报错**:`Builder` 拿不到工具注册表时用一个空的，
+# 于是每次请求里的 tools 是 `[]`，模型只好用自己的方式凑合——
+# 把工具调用当文本吐出来，或者绕道解释"我没有 shell 工具"。
+# **一次执行看着是成功的，产出里一个字有用的都没有。**
+SKILL=$(mcp skill.create "$(python3 - "$PROJ" <<'EOP'
+import json, sys
+print(json.dumps({"project": sys.argv[1], "name": "找口令",
+  "content": "用 Glob 看清楚有哪些文件，再用 Read 读 口令.md，"
+             "把文件里那一行中文原样写出来，只写那一行。读不到就写「读不到」。",
+  "declaration": {"output": "report", "needsRepository": True,
+                  "maxDurationMillis": 180000}}, ensure_ascii=False))
+EOP
+)" | 取 skill)
+READRUN=$(mcp skill.test "{\"project\":\"$PROJ\",\"skill\":\"$SKILL\",\"version\":1,\"inputs\":\"{}\"}")
+要 "跑成了" "$(echo "$READRUN" | 取 succeeded)" "True"
+OUT=$(echo "$READRUN" | 取 output)
+含 "产出里有只有那个仓才有的口令" "$OUT" "$TOKENWORD"
+不含 "工具调用没被当成文本吐出来" "$OUT" "DSML"
+不含 "引擎的回合旁白不进产出" "$OUT" "used tools:"
+case "$OUT" in *"$TOKENWORD"*) ;; *) printf '     产出：%s\n' "$OUT" ;; esac
+
 收工

@@ -49,6 +49,7 @@ attacore-runtime = { package = "runtime", path = "vendor/attacore/crates/runtime
 attacore-model = { package = "model", path = "vendor/attacore/crates/model" }
 attacore-scene = { package = "scene", path = "vendor/attacore/crates/scene" }
 attacore-core = { package = "base", path = "vendor/attacore/crates/core" }
+attacore-tools = { package = "tools", path = "vendor/attacore/crates/tools" }
 # 嵌了 AttaCore 就把 tokio 一起带进来了。
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-util = "0.7"

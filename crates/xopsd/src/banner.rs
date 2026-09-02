@@ -5,6 +5,7 @@
 //! ```text
 //! 引擎是桩            "跑得通、什么也没真跑" —— 查起来很慢的一种错
 //! 裸跑没兑现的八条    D58 的代价可枚举，接容器那天它要缩短
+//! 引擎那一侧的缺口      与隔离无关，但同样是"看着像真的、其实不是"
 //! 出网后端没接        声明了出网的插件也发不出去
 //! ```
 //!
@@ -58,6 +59,13 @@ pub fn render(config: &Config, assembled: &Assembled) -> String {
         out.push_str("    接上容器后端那天，这张表要缩短。**缩短这件事是看得见的。**\n");
     }
 
+    if !assembled.engine_gaps.is_empty() {
+        out.push_str("\n⚠️  引擎那一侧的已知缺口——\n");
+        for (id, why) in assembled.engine_gaps {
+            out.push_str(&format!("      {id}  {why}\n"));
+        }
+    }
+
     out.push_str("\n⚠️  插件的出网后端没接（Denied）：声明了出网的插件也发不出去。\n");
     out
 }
@@ -65,6 +73,21 @@ pub fn render(config: &Config, assembled: &Assembled) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 引擎那一侧的缺口也要说出来() {
+        // ⚠️ 这条盯的不是文案，是**这件事没被吞掉**:
+        // `_runs.tokensUsed` 是少算的，而 `TSK-005` 的预算就是拿它去比的。
+        // **一个看着像真数、实际少算的预算，比没有预算更糟**——
+        // 没有预算至少不会有人以为它在管事。
+        let config = Config {
+            secret_key: "0a".repeat(32),
+            ..Config::default()
+        };
+        let text = render(&config, &crate::assemble(&config).unwrap());
+        assert!(text.contains("TSK-005"), "启动时要说出来：{text}");
+        assert!(text.contains("少算"), "而且要说清楚是哪一种不准：{text}");
+    }
 
     #[test]
     fn 桩引擎与裸跑都要说出来() {

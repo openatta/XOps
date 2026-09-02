@@ -1,6 +1,11 @@
 # `TurnOutcome.usage` 只有最后一次 API 调用的用量
 
-**状态**：待投递
+**状态**：**已投递**（2026-09-02，openatta/AttaCore）。链接待补——
+拿到之后补在这一行，**不要删这个文件**：删掉之后下一个人会重新发现同一件事。
+
+上游接了、发了新版本之后，XOps 这边是三步：子模块跟版本 →
+`xops_exec::embedded::tokens` 改成读累计字段 →
+**删掉启动横幅里 `IsolationLevel::engine_gaps` 那一条**。
 
 ## 现象
 

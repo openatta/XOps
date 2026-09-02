@@ -503,6 +503,32 @@ mod tests {
         assert!(产出行.iter().any(|name| name == crate::emit::NAME));
     }
 
+    /// 上游那句旁白长什么样。**改这个常量之前先看下面那条测试。**
+    const 上游的旁白格式: &str = r#""Turn {} used tools: {}","#;
+
+    #[test]
+    fn 上游改了旁白的说法这条要当场红() {
+        // ⚠️ **`is_turn_narration` 认的是上游那句话的字面形状。**
+        // 上游把 "used tools" 换个说法，过滤就不匹配了，于是每一份多回合的报告
+        // 重新以 `[Turn 0 used tools: Glob]` 开头——**不报错、不为空**，
+        // 只是交付物里多了我们的实现细节，而没有任何东西会告诉我们它坏了。
+        //
+        // 所以盯着源头:那句 `format!` 还在不在。子模块是只读的（改那边被禁止），
+        // 但**读得到**——一次版本升级把这句话改掉，这条测试当场红，
+        // 而不是等到某天有人看报告发现不对。
+        let 上游 = std::fs::read_to_string("../../vendor/attacore/crates/runtime/src/turn.rs")
+            .expect("子模块没拉下来？`git submodule update --init`");
+        assert!(
+            上游.contains(上游的旁白格式),
+            "上游改了回合旁白的说法。`is_turn_narration` 跟着改，\
+             不然它会静默失效——真正的出路是让上游把旁白发成另一个事件，走 ISSUE"
+        );
+
+        // 顺带钉住我们这一侧认得出它。两边对不上时，上面那条过不了，这条也过不了。
+        assert!(is_turn_narration("[Turn 0 used tools: Glob, Read]"));
+        assert!(!is_turn_narration("这个仓是计量网关。"));
+    }
+
     #[test]
     fn 引擎的回合旁白不进产出() {
         // `[Turn 0 used tools: Glob]` 是引擎在两个回合之间发的合成正文。

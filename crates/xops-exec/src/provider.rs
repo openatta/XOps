@@ -30,6 +30,9 @@ impl IsolationLevel {
     ///
     /// 空表示全部兑现。
     #[must_use]
+    /// ⚠️ **`EXE-029` 不在这张表里**:`D62` 把它关闭了——不做容器后端，
+    /// 隔离归部署侧。**"决定不做"和"还没做"要分开**，混在一起的那张表
+    /// 会让人一直等着它缩短。
     pub const fn unsatisfied(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Self::Bare => &[
@@ -46,7 +49,6 @@ impl IsolationLevel {
                     "EXE-028",
                     "隔离的主动攻击测试无从谈起：被攻击的那道墙还没有",
                 ),
-                ("EXE-029", "四个执行契约的容器后端没有实现"),
             ],
             Self::Container => &[],
         }
@@ -62,7 +64,7 @@ impl IsolationLevel {
             concat!(
                 "单次 token 用量是**少算的**：引擎只交回最后一次 API 调用的用量，",
                 "一个回合里前几趟不在这个数里，预算因此咬不住。\n",
-                "               上游拿不出累计数，**这条要走 ISSUE**——见 docs/upstream-issues/",
+                "               上游拿不出累计数；**ISSUE 已投递**——见 docs/upstream-issues/",
             ),
         )]
     }
@@ -177,6 +179,12 @@ mod tests {
         // 这一条最要紧：主动攻击测试没有对象。
         assert!(missing.iter().any(|(id, _)| *id == "EXE-028"));
         assert!(missing.iter().any(|(id, _)| *id == "EXE-002"));
+        // ⚠️ **`EXE-029` 由 `D62` 关闭，不该再出现在"没兑现"里。**
+        // "决定不做"和"还没做"混在一张表里，会让人一直等着它缩短。
+        assert!(
+            !missing.iter().any(|(id, _)| *id == "EXE-029"),
+            "EXE-029 是决定不做（D62），不是没兑现"
+        );
         assert!(IsolationLevel::Container.unsatisfied().is_empty());
     }
 

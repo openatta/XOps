@@ -78,18 +78,41 @@ fn 扫描也看得到刚写进去的() {
     assert_eq!(seen.len(), 32, "扫描走的是读连接，它得看得到全部");
 }
 
+/// 开跑之前先铺好的行数。
+///
+/// ⚠️ **不铺的话这条测试是靠时序碰运气的。** 早先它断言"读到的总数 > 0"，
+/// 而四个读线程完全可能在写线程提交出第一批之前就把 200 圈跑完——
+/// 那时读到的是 0，断言红，**而红的原因跟被测的东西一点关系没有**。
+/// 它在本地绿了无数次，**第一次跑 CI 就红了**。
+///
+/// 铺好之后断言变成"每一次扫描都至少看得见铺好的那些"——
+/// 这才是要证的那件事（**读不被写挡住、也不会因为写在进行中而读空**），
+/// 而且它与线程怎么交错无关。
+const 铺好的: u32 = 16;
+
 #[test]
 fn 多个线程一起读写不出错() {
     let path = temp_db("concurrent");
     let _scratch = Scratch(path.clone());
     let store: Arc<dyn Store> = Arc::new(xops_store::SqliteStore::open(&path).unwrap());
     let reads = Arc::new(AtomicUsize::new(0));
+    let 读空了 = Arc::new(AtomicUsize::new(0));
+
+    for index in 0..铺好的 {
+        store
+            .put(
+                space::ROW,
+                &[b"c\0".as_slice(), &index.to_be_bytes()].concat(),
+                b"v",
+            )
+            .unwrap();
+    }
 
     // 一个写线程 + 四个读线程。**写是串行的，读不该被它挡住。**
     let writer = {
         let store = Arc::clone(&store);
         thread::spawn(move || {
-            for index in 0..200u32 {
+            for index in 铺好的..200u32 {
                 store
                     .put(
                         space::ROW,
@@ -104,9 +127,17 @@ fn 多个线程一起读写不出错() {
         .map(|_| {
             let store = Arc::clone(&store);
             let reads = Arc::clone(&reads);
+            let 读空了 = Arc::clone(&读空了);
             thread::spawn(move || {
                 for _ in 0..200 {
-                    let page = store.scan(space::ROW, b"c\0", None, 16).unwrap();
+                    // ⚠️ 页大小要够装下铺好的那些，否则"至少看得见铺好的"
+                    // 会被页大小截断成假的。
+                    let page = store
+                        .scan(space::ROW, b"c\0", None, 铺好的 as usize)
+                        .unwrap();
+                    if page.len() < 铺好的 as usize {
+                        读空了.fetch_add(1, Ordering::Relaxed);
+                    }
                     reads.fetch_add(page.len(), Ordering::Relaxed);
                 }
             })
@@ -122,7 +153,20 @@ fn 多个线程一起读写不出错() {
         200,
         "写线程写下的一条不少"
     );
-    assert!(reads.load(Ordering::Relaxed) > 0, "读线程确实读到了东西");
+    // ⚠️ **这才是要证的那件事，而且它与线程怎么交错无关**：
+    // 写在进行中的时候，每一次扫描都照样看得见已经在库里的那些——
+    // 读没有被写挡住，也没有读到一个空的中间态。
+    assert_eq!(
+        读空了.load(Ordering::Relaxed),
+        0,
+        "有 {} 次扫描连铺好的 {铺好的} 行都没看全 —— 读被写挡住了",
+        读空了.load(Ordering::Relaxed)
+    );
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        800 * 铺好的 as usize,
+        "四个读线程各 200 圈，每圈都该看满一页"
+    );
 }
 
 #[test]

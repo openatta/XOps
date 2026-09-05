@@ -16,8 +16,13 @@ TOKENWORD="鲸鱼吃了七枚橄榄"
 
 节 "① 造一个本地仓，推一笔提交，然后把它设成只读"
 mkdir -p "$BARE" "$WORK"
-git init -q --bare "$BARE"
-git init -q "$WORK"
+# ⚠️ **分支名不留给这台机器的配置决定。** `git init` 让 HEAD 指向
+# `init.defaultBranch`——本地可能是 `main`，别人机器上可能是 `master`。
+# 下面推的是 `refs/heads/main`，于是在 `master` 的机器上 bare 仓的 HEAD 悬空，
+# 后面"解得出确切的 sha"那条会红，**而红的原因跟被测的东西一点关系没有**。
+# 同一个坑在 `repo_acceptance.rs` 里被 CI 第一次跑就撞出来了（那边是 Linux runner）。
+git init -q --bare -b main "$BARE"
+git init -q -b main "$WORK"
 (
   cd "$WORK" || exit 1
   git config user.email scenarios@xops; git config user.name scenarios

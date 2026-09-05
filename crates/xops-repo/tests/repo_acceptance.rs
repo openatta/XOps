@@ -720,7 +720,8 @@ fn 本地仓(word: &str) -> (PathBuf, String) {
         );
     };
     git(&bare, &["init", "--quiet", "--bare"]);
-    git(&work, &["init", "--quiet"]);
+    // 同上：分支名不留给这台机器的配置决定。
+    git(&work, &["init", "--quiet", "-b", "main"]);
     git(&work, &["config", "user.email", "t@xops"]);
     git(&work, &["config", "user.name", "t"]);
     fs::write(work.join("口令.md"), format!("{word}\n")).unwrap();
@@ -731,6 +732,16 @@ fn 本地仓(word: &str) -> (PathBuf, String) {
         &work,
         &["push", "--quiet", "origin", "HEAD:refs/heads/main"],
     );
+    // ⚠️ **bare 仓的 HEAD 要自己钉住。** `git init --bare` 让 HEAD 指向
+    // `init.defaultBranch`，而那是**跑测试这台机器的配置**：
+    // 本地是 `main`，GitHub 的 runner 上是 `master`。上面推的是 `refs/heads/main`，
+    // 于是在 `master` 的机器上 HEAD 悬空——`head_revision` 如实回
+    // "这个仓上解不出 HEAD —— 它可能是空的"，**而那句话是对的**：
+    // 造出来的仓真的没有 HEAD。**坏的是夹具，不是被测的代码。**
+    //
+    // 这条第一次跑 CI 就红了：**本地全绿、Linux 上红**，
+    // 而两边跑的是同一份代码——差的只是一行 git 配置。
+    git(&bare, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     let out = Command::new("git")
         .current_dir(&work)
         .args(["rev-parse", "HEAD"])

@@ -52,6 +52,9 @@ pub struct Assembled {
     pub unsatisfied: &'static [(&'static str, &'static str)],
     /// 引擎那一侧的已知缺口。**与隔离无关**，但同样要在启动时说出来。
     pub engine_gaps: &'static [(&'static str, &'static str)],
+    /// **实际在拦着的那几道**（`D64`）。⚠️ 与 `unsatisfied` 是一对：
+    /// 只说没兑现的，读的人会以为完全敞着；只说这一张，就是在假装做完了。
+    pub bounds: &'static [(&'static str, &'static str)],
     /// 预置了几个能登进 Web 的账号。**0 就是没有人进得去**——
     /// 这是第三处不能悄悄发生的降级：页面在、路由在、就是登不进去。
     pub logins: usize,
@@ -782,6 +785,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         engine_kind,
         unsatisfied: isolation.unsatisfied(),
         engine_gaps: xops_exec::IsolationLevel::engine_gaps(),
+        bounds: xops_exec::IsolationLevel::bounds(),
         logins: config.logins.len(),
         notices,
         dispatcher,

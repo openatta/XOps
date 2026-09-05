@@ -58,9 +58,18 @@ pub fn render(config: &Config, assembled: &Assembled) -> String {
         }
         out.push_str(
             "    ⚠️ **这张表不会因为我们做点什么而缩短**（D62：不做容器隔离）。\n\
-             \x20   需要那道墙的部署自己去建；最该先补的是资源上限（EXE-008），\n\
-             \x20   一个跑飞的技能能吃满这台机器。\n",
+             \x20   需要那道墙的部署自己去建；`EXE-008` 的**硬上限**\n\
+             \x20   （OS 级的 CPU / 内存 / 磁盘）在进程内做不到，归部署侧（D64）。\n",
         );
+    }
+
+    // ⚠️ **两张表要挨着放。** 只说上面那张，读的人会以为完全敞着；
+    // 只说下面这张，就是在假装 `EXE-008` 做完了。**两半都要看得见。**
+    if !assembled.bounds.is_empty() {
+        out.push_str("\n  实际拦着的（D64）——\n");
+        for (id, why) in assembled.bounds {
+            out.push_str(&format!("      {id:<9} {why}\n"));
+        }
     }
 
     if !assembled.engine_gaps.is_empty() {
@@ -137,6 +146,21 @@ mod tests {
         assert!(banner.contains("出网后端没接"));
         // ⚠️ **登不进来这件事也要说出来。** 页面在、路由在、就是进不去——
         // 而错误上分不出"没配"与"打错了"，那个不区分是给探测者的。
+        // ⚠️ **没兑现的那张表与实际拦着的那张表，必须一起出现。**
+        // 只有前一张，读的人会以为资源完全敞着；只有后一张，
+        // 就是在假装 `EXE-008` 做完了。
+        assert!(
+            banner.contains("EXE-008"),
+            "硬上限没有这件事要说出来：{banner}"
+        );
+        assert!(
+            banner.contains("实际拦着的"),
+            "拦着的那几道也要说出来：{banner}"
+        );
+        assert!(
+            banner.contains("TSK-005"),
+            "其中一道是 token 上限：{banner}"
+        );
         assert!(
             banner.contains("没有预置任何账号"),
             "默认配置下没有人登得进 Web，横幅要说出来：{banner}"

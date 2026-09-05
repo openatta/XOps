@@ -125,12 +125,34 @@ impl EmbeddedEngine {
     ///
     /// 引擎那一侧的工作目录是 `local_data_dir` 的**上一级**,所以这里放的是
     /// `<工作区>/.atta`——那个位置由引擎定,不由我们定。
+    ///
+    /// # 单次 token 上限（`TSK-005`）
+    ///
+    /// `max_budget_tokens` 按这次派工单设。引擎默认的 `EngineBudget` 读它，
+    /// 在**每次模型调用之后**比一次：到九成发一句提醒，撞上就**结束这个回合**，
+    /// `stop_reason` 是 `budget_exceeded`。
+    ///
+    /// ⚠️ **这才是 `TSK-005` 说的"撞上即强制终止"。** `Runtime` 那一侧的比较
+    /// 是**事后归类**——它决定这次执行算不算数，但那时钱已经花了。
+    /// 两处都要有：引擎这一侧管住烧，`Runtime` 那一侧管住算。
+    ///
+    /// ⚠️ **两个数的口径不一样，而且是故意的**：
+    ///
+    /// ```text
+    /// 引擎比的      input + output（它自己的 Spend 就是这么累的）
+    /// 我们比的      input + output + 写缓存 + 读缓存（见 `tokens`）
+    /// ```
+    ///
+    /// 我们的数**不小于**引擎的数，所以 `Runtime` 那一道**不会比引擎晚**——
+    /// 引擎停下来的每一次，事后归类照样判得出来。反过来不成立：
+    /// 缓存占比大的时候，引擎可能一次都没喊停而我们已经判超了。
+    /// **那个方向是安全的**，它只意味着"钱花了但不算数"，不意味着漏判。
     fn settings_for(&self, worksheet: &Worksheet) -> Arc<Settings> {
-        let Some(workspace) = worksheet.capabilities.workspace.as_ref() else {
-            return Arc::clone(&self.settings);
-        };
         let mut settings = (*self.settings).clone();
-        settings.paths.local_data_dir = workspace.join(".atta");
+        settings.execution.max_budget_tokens = Some(worksheet.limits.token_budget);
+        if let Some(workspace) = worksheet.capabilities.workspace.as_ref() {
+            settings.paths.local_data_dir = workspace.join(".atta");
+        }
         Arc::new(settings)
     }
 

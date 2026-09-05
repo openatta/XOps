@@ -341,3 +341,62 @@ fn 命中缓存的那部分也算进用量() {
         "11 进 + 7 出 + 300 写缓存 + 40 读缓存"
     );
 }
+
+/// 一趟要工具、并且**报了很大用量**的调用。用来把预算顶穿。
+fn 烧钱的一趟(input_tokens: u64, output_tokens: u64) -> Vec<StreamEvent> {
+    let mut leg = tool_call_leg(input_tokens, output_tokens);
+    for event in &mut leg {
+        if let StreamEvent::MessageStart { message } = event {
+            message.usage.input_tokens = input_tokens;
+        }
+    }
+    leg
+}
+
+#[test]
+fn 撞上预算就在半路停下来而不是跑完再说() {
+    // ⚠️ **这是 `TSK-005` 的另一半**："消耗的模型 token 撞上这个数，**强制终止**"。
+    //
+    // `Runtime` 那一道是**事后归类**——它决定这次执行算不算数，可那时钱已经花了。
+    // 这一条盯的是引擎**真的收手了**：脚本里排了两趟，预算只够第一趟，
+    // 于是第二趟**发都没发出去**。
+    //
+    // ⚠️ 这一条以前根本无从谈起：预算只在那条走 socket 的死路上比过一次
+    // （`D63` 已删），嵌入式这条路上一次都没比过。
+    let (engine, mock) = engine(vec![烧钱的一趟(600, 400), one_line_turn("第二趟")]);
+    let mut sheet = worksheet("烧钱");
+    sheet.limits.token_budget = 1_000; // 第一趟就正好撞上 600 + 400。
+    let done = engine
+        .run(&sheet, &Cancel::new())
+        .expect("回合本身是收得住的");
+
+    assert_eq!(mock.calls(), 1, "第二趟不该被发出去 —— 钱在第一趟就用完了");
+    assert_eq!(mock.turns_remaining(), 1, "第二个脚本还原样躺着");
+    assert!(
+        done.trace.contains("stop=budget_exceeded"),
+        "过程记录里要说得出它是被预算掐掉的：{}",
+        done.trace
+    );
+    assert!(
+        done.tokens_used >= sheet.limits.token_budget,
+        "用量照实记 {} —— `_runs.tokensUsed` 靠它（TSK-005）",
+        done.tokens_used
+    );
+}
+
+#[test]
+fn 预算够的时候引擎不插手() {
+    // 反过来的那一半：**一个一律在第一趟就停的实现也"守住了预算"，但它没用。**
+    let (engine, mock) = engine(vec![烧钱的一趟(600, 400), one_line_turn("第二趟")]);
+    let mut sheet = worksheet("不烧钱");
+    sheet.limits.token_budget = 100_000;
+    let done = engine.run(&sheet, &Cancel::new()).unwrap();
+
+    assert_eq!(mock.calls(), 2, "预算够就该跑完两趟");
+    assert!(
+        !done.trace.contains("stop=budget_exceeded"),
+        "{}",
+        done.trace
+    );
+    assert_eq!(done.output, "第二趟");
+}

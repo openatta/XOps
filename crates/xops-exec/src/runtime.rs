@@ -122,6 +122,8 @@ impl ExecContract for Runtime {
         let clock = Arc::clone(&self.clock);
         let runs = Arc::clone(&self.runs);
         let timeout = worksheet.limits.timeout_millis;
+        // 派工单在下面被搬进线程，先把要比的那个数留出来（`TSK-005`）。
+        let budget = worksheet.limits.token_budget;
 
         // 看门狗：到点先请求取消，再宽限一段，然后**无论如何**收摊（EXE-017 / EXE-019）。
         {
@@ -175,6 +177,38 @@ impl ExecContract for Runtime {
                 std::panic::catch_unwind(AssertUnwindSafe(|| engine.run(&worksheet, &cancel)));
             let finished_at = clock.now();
             let outcome = match result {
+                // ⚠️ **预算在这里比，不在引擎里比**（`TSK-005`）。
+                //
+                // 它以前只在那条走 socket 的路上比过一次——而那条路
+                // **从来没接进任何部署**，`D63` 把它删了。也就是说
+                // **今天真正跑的那条路上，单次 token 上限一次都没有被比过**：
+                // 派工单带着 `token_budget`、`_runs` 那一行同时记着 `tokensUsed`
+                // 与 `tokenBudget`，两个数并排躺着，**没有人拿它们比一下**。
+                //
+                // 放在这里是因为它不是引擎的性质，是执行契约的性质：
+                // 换成 `StubEngine` 也该照样成立。
+                //
+                // ⚠️ **这一道是事后归类，不是"撞上即终止"。** `TSK-005` 的原话是
+                // "消耗的模型 token 撞上这个数，**强制终止**"——要真的在半路停下来，
+                // 得把引擎那侧的 `BudgetPolicy` 接进 `EmbeddedEngine`。
+                // **在那之前：钱已经花了，只是这次执行不算数**（产出不落表、
+                // 不结算任何节点，`FLW-017⑥`）。这一半比没有强，但它不是全部。
+                //
+                // ⚠️ **比的是 `>=`，不是 `>`**：`TSK-005` 说的是"**撞上**这个数"。
+                Ok(Ok(completed)) if completed.tokens_used >= budget => Outcome {
+                    tokens_used: completed.tokens_used,
+                    trace: completed.trace,
+                    ..Outcome::failed(
+                        run,
+                        FailureKind::TokenBudget,
+                        format!(
+                            "这次执行用了 {} 个 token，撞上单次上限 {budget}（TSK-005）",
+                            completed.tokens_used
+                        ),
+                        started_at,
+                        finished_at,
+                    )
+                },
                 Ok(Ok(completed)) => Outcome {
                     run,
                     status: Status::Succeeded,

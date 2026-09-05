@@ -112,7 +112,7 @@ pub fn looks_like_credential(worksheet: &Worksheet) -> Option<String> {
         "password",
         "secret",
         "BEGIN PRIVATE KEY",
-        ".sock", // attacored 的 socket 等同于模型凭据本身
+        ".sock", // 一个 socket 路径能通向的东西等同于凭据本身
     ] {
         if rendered.contains(marker) {
             return Some(marker.to_owned());

@@ -642,6 +642,9 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - `Runtime` 与具体引擎之间的口子。**不是对外契约**——对外那条里不出现引擎。
 - `healthy()` 是 `EXE-030` 的依据；`run()` 必须盯着 `Cancel`，因为
   "超时终止不得留下孤儿会话继续消耗模型额度"只有引擎这一侧做得到。
+- ⚠️ **今天只有两个实现：`EmbeddedEngine` 与 `StubEngine`，都在本进程里。**
+  `healthy()` 因此恒为真——但那个口子**留着**：`EXE-030` 对任何走进程外的实现
+  照样成立，而 `Runtime` 先问一句再跑的那半边逻辑不该跟着实现一起消失（`D63`）。
 - 进程内那版（`EmbeddedEngine`）把 `capabilities.workspace` 变成这一次执行的
   `Settings.paths`，agent 的工作目录因此是那份只读工作区。
 - ⚠️ **这条线在 `D61` 把引擎搬进程时断过。** 两进程那版是把工作区当
@@ -677,11 +680,22 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-exec#Runtime
 - module: xops-exec
-- consumers: [RP-11]
-- 把同步的引擎变成异步的契约，并守四条：提交即返回 · 引擎不可用不就地跑 ·
-  超时强制终止 · **引擎崩了或卡死也要在有限时间内收摊**（`EXE-017`）。
-- 最后一条落成两样：工作线程外面套 `catch_unwind`，加一个到点必收摊的看门狗
-  （`GRACE_MILLIS`）。**没有任何一条路径能让一次执行永远停在 running 上。**
+- consumers: [xopsd]
+- 执行契约的实现：提交即返回（`EXE-021`）· 看门狗超时（`EXE-019`）·
+  引擎 panic 由 `catch_unwind` 接住并归类（`EXE-017` 的那一半）·
+  先问 `healthy()` 再跑（`EXE-030`）。
+- **单次 token 上限在这里判**（`TSK-005`）。
+  ⚠️ **它以前只在那条走 socket 的路上比过一次**——而那条路从来没接进任何部署，
+  `D63` 把它删了。也就是说**今天真正跑的那条路上，`token_budget` 一次都没有被比过**：
+  派工单带着它、`_runs` 那一行同时记着 `tokensUsed` 与 `tokenBudget`，
+  **两个数并排躺着，没有人拿它们比一下**。
+  放在这里是因为它不是引擎的性质，是执行契约的性质：**换成 `StubEngine` 也照样成立**，
+  有测试盯着这一点。
+- ⚠️ **这是事后归类，不是"撞上即终止"。** `TSK-005` 原话是"消耗的模型 token
+  撞上这个数，**强制终止**"。要真的在半路停下来，得把引擎那侧的 `BudgetPolicy`
+  接进 `EmbeddedEngine`——**在那之前：钱已经花了，只是这次执行不算数**
+  （产出不落表、不结算任何节点，`FLW-017⑥`）。**这一半比没有强，但它不是全部。**
+- ⚠️ **比的是 `>=` 不是 `>`**：`TSK-005` 说的是"消耗的模型 token **撞上**这个数"。
 
 ### Element: rust:xops-exec#StubEngine
 - module: xops-exec
@@ -704,17 +718,6 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 裸跑后端：四个执行契约（Process / FileSystem / Network / Sandbox）的裸跑实现。
 - ⚠️ `NetworkProvider::enforced()` 返回 `false`：**白名单只被记录，没有被强制**。
   把这件事做成一个能问的方法，是为了让调用方不会以为它生效了。
-
-### Element: rust:xops-exec#AttaCoreEngine
-- module: xops-exec
-- consumers: [xopsd]
-- 接 `attacored`：NDJSON over Unix socket，一行一个 JSON-RPC 2.0 对象。
-- `EXE-016` 在这里兑现：**一次执行一个会话，用完即弃**，会话 id 进过程记录——
-  所以"第二次读不到第一次的痕迹"是**实测得到的**，不是看代码看出来的。
-- ⚠️ **socket 路径与令牌绝不进派工单。** AttaCore 自己的文档把话说死了：
-  "把 socket 或 token 暴露出去，等同于暴露模型凭据本身"。裸跑下 `EXE-015` 靠的就是这条：
-  凭据在 attacored 那一侧，执行方手里没有通往它的路径。
-- ⚠️ **不要自己拼 socket 路径去猜**——daemon 换启动参数重启时它会变。
 
 ### Element: rust:xops-repo#Sealer
 - module: xops-repo

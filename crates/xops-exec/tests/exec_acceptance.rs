@@ -5,16 +5,12 @@
 //! [`IsolationLevel::unsatisfied`] 把没兑现的逐条列了出来，下面第一个测试盯着那张表。
 //! 这正是 `EXE-029` 要的"**沙箱不静默降级：兑现不了的逐条如实上报，绝不当作已兑现**"。
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
 use xops_core::SystemClock;
-use xops_exec::attacore::AttaCoreEngine;
 use xops_exec::worksheet::{Capabilities, Limits, RunId};
 use xops_exec::{
     Behaviour, Cancel, Completed, Engine, ExecContract, FailureKind, IsolationLevel, Runtime,
@@ -284,111 +280,97 @@ fn 派工单不合法时提交就失败() {
     );
 }
 
-// ——————————————————————————————— attacored 客户端 ———————————————————————————————
-
-/// 一个只会说 NDJSON 的假 attacored。**用来实测会话隔离**（`EXE-016`）。
-fn fake_attacored(path: &std::path::Path, sessions: Arc<std::sync::Mutex<Vec<String>>>) {
-    let listener = UnixListener::bind(path).expect("绑不上");
-    thread::spawn(move || {
-        let mut counter = 0;
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { continue };
-            let sessions = Arc::clone(&sessions);
-            counter += 1;
-            let index = counter;
-            thread::spawn(move || serve(stream, index, &sessions));
-        }
-    });
-}
-
-fn serve(stream: UnixStream, index: usize, sessions: &Arc<std::sync::Mutex<Vec<String>>>) {
-    let mut writer = stream.try_clone().expect("复制不了");
-    let reader = BufReader::new(stream);
-    for line in reader.lines() {
-        let Ok(line) = line else { return };
-        let Ok(frame) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        let id = frame.get("id").and_then(Value::as_u64).unwrap_or_default();
-        let response = match frame.get("method").and_then(Value::as_str) {
-            Some("daemon.ping") => json!({"jsonrpc": "2.0", "id": id, "result": {"ok": true}}),
-            Some("session.create") => {
-                // **每次都是一个新会话** —— 这正是 EXE-016 要被实测的那件事。
-                let session = format!("session-{index}");
-                sessions.lock().unwrap().push(session.clone());
-                json!({"jsonrpc": "2.0", "id": id, "result": {"session_id": session}})
-            }
-            Some("session.run_turn") => json!({
-                "jsonrpc": "2.0", "id": id,
-                "result": {"text": "跑完了", "usage": {"total_tokens": 42}},
-            }),
-            _ => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
-        };
-        if writeln!(writer, "{response}").is_err() {
-            return;
-        }
-    }
-}
-
-#[test]
-fn 两次执行拿到的是两个会话() {
-    let dir = std::env::temp_dir().join(format!("xops-exec-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let socket = dir.join("attacored.sock");
-    let _ = std::fs::remove_file(&socket);
-    let sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
-    fake_attacored(&socket, Arc::clone(&sessions));
-    thread::sleep(Duration::from_millis(50));
-
-    let engine = Arc::new(AttaCoreEngine::at(&socket));
-    assert!(engine.healthy(), "假 daemon 该答得上 ping");
-    let runtime = runtime(engine);
-
-    let mut traces = Vec::new();
-    for _ in 0..2 {
-        let run = runtime.submit(worksheet(10_000)).unwrap();
-        assert_eq!(
-            wait_for(&runtime, run, Duration::from_secs(10)),
-            Status::Succeeded
-        );
-        let outcome = runtime.collect(run).unwrap().unwrap();
-        assert_eq!(outcome.output, "跑完了");
-        assert_eq!(outcome.tokens_used, 42);
-        traces.push(outcome.trace);
-    }
-
-    let recorded = sessions.lock().unwrap().clone();
-    assert_eq!(recorded.len(), 2, "一次执行一个会话");
-    assert_ne!(recorded[0], recorded[1], "EXE-016：两次执行不共用会话");
-    // 会话 id 进了 trace —— 这条因此是**实测得到的**，不是看代码看出来的。
-    assert!(traces[0].contains(&recorded[0]));
-    assert!(traces[1].contains(&recorded[1]));
-    assert!(
-        !traces[1].contains(&recorded[0]),
-        "第二次读不到第一次的痕迹"
-    );
-
-    let _ = std::fs::remove_file(&socket);
-}
+// ——————————————————————————————— TSK-005 单次 token 上限 ———————————————————————————————
 
 #[test]
 fn 超过token预算算预算超支不算别的() {
-    let dir = std::env::temp_dir().join(format!("xops-exec-budget-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let socket = dir.join("attacored.sock");
-    let _ = std::fs::remove_file(&socket);
-    fake_attacored(&socket, Arc::new(std::sync::Mutex::new(Vec::new())));
-    thread::sleep(Duration::from_millis(50));
-
-    let runtime = runtime(Arc::new(AttaCoreEngine::at(&socket)));
+    // ⚠️ **这条断言以前跑在一条死路上。** 它用的是一个假 attacored，
+    // 而那个假 daemon 的回话形状是**照着我们的假设写的**——真实守护进程
+    // 既不回 `text` 也不回 `usage`。那条路 `D63` 删了，这条断言搬到
+    // `Runtime` 上重新做：**换成桩引擎也该成立**，因为预算不是引擎的性质，
+    // 是执行契约的性质。
+    //
+    // ⚠️ 搬的过程里撞出一件事：**预算以前只在那条死路上比过一次**。
+    // 今天真正跑的嵌入式那条路上，`token_budget` 一次都没有被比过——
+    // 派工单带着它、`_runs` 那一行同时记着 `tokensUsed` 与 `tokenBudget`，
+    // **两个数并排躺着，没有人拿它们比一下**。
+    let engine = Arc::new(StubEngine::new());
+    engine.behaves(Behaviour::Succeed {
+        output: "跑完了".into(),
+        tokens: 500,
+    });
+    let runtime = runtime(engine);
     let mut sheet = worksheet(10_000);
-    sheet.limits.token_budget = 10; // 假 daemon 回的是 42。
+    sheet.limits.token_budget = 100;
+    let run = runtime.submit(sheet).unwrap();
+    wait_for(&runtime, run, Duration::from_secs(10));
+
+    let outcome = runtime.collect(run).unwrap().unwrap();
+    assert_eq!(outcome.failure, Some(FailureKind::TokenBudget));
+    assert_eq!(outcome.status, Status::Failed);
+    assert_eq!(outcome.tokens_used, 500, "用了多少照实记，不是记成上限");
+    assert!(
+        !FailureKind::TokenBudget.worth_retrying(),
+        "同一份派工单重跑一次会撞上同一个上限"
+    );
+}
+
+#[test]
+fn 没撞上预算的执行照常成功() {
+    // 反过来的那一半：**一个一律判超支的实现也"挡住了超支"，但它没用。**
+    let engine = Arc::new(StubEngine::new());
+    engine.behaves(Behaviour::Succeed {
+        output: "跑完了".into(),
+        tokens: 99,
+    });
+    let runtime = runtime(engine);
+    let mut sheet = worksheet(10_000);
+    sheet.limits.token_budget = 100;
+    let run = runtime.submit(sheet).unwrap();
+    wait_for(&runtime, run, Duration::from_secs(10));
+
+    let outcome = runtime.collect(run).unwrap().unwrap();
+    assert_eq!(outcome.status, Status::Succeeded);
+    assert_eq!(outcome.output, "跑完了");
+}
+
+#[test]
+fn 正好用满就算撞上() {
+    // ⚠️ **这条盯的是 `>=` 与 `>` 的那一格之差。** `TSK-005` 说的是"**撞上**这个数"，
+    // 而引擎那一侧的 `EngineBudget` 也是 `>=`——它会**停在正好等于**的位置。
+    // 这里写成 `>` 的话，一次正好被引擎按预算掐掉的执行会被判成成功，
+    // **而那个缝只有在缓存用量为零时才露出来**，不会自己在测试里出现。
+    let engine = Arc::new(StubEngine::new());
+    engine.behaves(Behaviour::Succeed {
+        output: "刚好".into(),
+        tokens: 100,
+    });
+    let runtime = runtime(engine);
+    let mut sheet = worksheet(10_000);
+    sheet.limits.token_budget = 100;
     let run = runtime.submit(sheet).unwrap();
     wait_for(&runtime, run, Duration::from_secs(10));
     assert_eq!(
         runtime.collect(run).unwrap().unwrap().failure,
         Some(FailureKind::TokenBudget)
     );
+}
 
-    let _ = std::fs::remove_file(&socket);
+#[test]
+fn 预算这条判定与引擎无关() {
+    // ⚠️ 这一条盯的是**它现在长在哪**：`Runtime` 上，不是某个引擎里。
+    // 长在引擎里的后果已经见过一次了——**换一条路就没有了，而且不报错**。
+    // 桩引擎手上没有任何预算逻辑，照样判得出来。
+    let engine = Arc::new(StubEngine::new());
+    engine.behaves(Behaviour::Succeed {
+        output: String::new(),
+        tokens: u64::MAX,
+    });
+    let runtime = runtime(engine);
+    let run = runtime.submit(worksheet(10_000)).unwrap();
+    wait_for(&runtime, run, Duration::from_secs(10));
+    assert_eq!(
+        runtime.collect(run).unwrap().unwrap().failure,
+        Some(FailureKind::TokenBudget)
+    );
 }

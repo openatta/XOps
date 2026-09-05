@@ -40,6 +40,31 @@ entries:
     decidedBy: xbitsmaster
     decidedAt: 2026-09-01T00:00:00Z
 
+  - id: cbc-drop-attacore-socket-engine
+    question: >-
+      删掉 rust:xops-exec#AttaCoreEngine（走 Unix socket 连 attacored 的那条执行后端）。
+      D61 之后引擎以库的形式嵌在同一个进程里，这条路没有接进任何部署；
+      但它是 xops-exec 的公开类型，删掉是一次破坏性契约变更。
+      要不要留着当「将来跨机器执行」的现成实现？
+    decision: >-
+      删。留着比没有更糟——它**从来没有和一个真的 attacored 说过话**：
+      按一个想象中的回话格式写成，读 /result/text 与 /result/usage/total_tokens，
+      而真实守护进程的 run_turn 最终响应里两样都没有（正文与用量只在 session.event
+      事件流里）。后果是**产出恒为空串、token 恒为 0，两样都不报错**。
+      同一处还有三样：过程记录原样收下事件帧因而含模型回话原文（违 I-F）、
+      读超时 30 秒而派工单给 15 分钟（健康但慢的执行会被杀掉并误报）、
+      会话建了从不 close（堆在 daemon 的池子里，transcript 无 GC）。
+      ⚠️ 它唯一的测试用的是一个**回话形状照着我们的假设写的**假 daemon，
+      于是那条测试证明的是"客户端与它自己的假设一致"——它绿了，而且会一直绿。
+      **一份能编译、有测试、看着完整的死代码，比一个空白的 trait 更容易被信任。**
+      真要跨机器执行的那天，照着现在的协议文档重写比修它快，且不继承这四处假设。
+      **保留的是能力不是实现**：Engine 仍是 trait、StubEngine 仍在、
+      Engine::healthy 那个口子仍在（EXE-030 对任何进程外实现照样成立），换后端不改一行。
+      ⚠️ 删之前先接住了一样东西：TSK-005 的单次 token 上限**只在这条死路上比过一次**，
+      嵌入式那条路上一次都没比过。判定已搬到 Runtime 上（与引擎无关，桩引擎也成立）。
+    decidedBy: xbitsmaster
+    decidedAt: 2026-09-05T00:00:00Z
+
 # 填一条长这样（把 entries: [] 换成 entries: 再往下缩进）：
 #
 # entries:

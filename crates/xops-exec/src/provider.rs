@@ -89,13 +89,16 @@ impl IsolationLevel {
             ),
             (
                 "EXE-015",
-                "模型凭据在 attacored 那一侧，从结构上进不了执行方",
+                "模型凭据只进引擎的鉴权模式：不进派工单、不进过程记录、不进产出",
             ),
             (
                 "EXE-013",
                 "表数据不是数据源：派工单里没有表，只有调用方查好传进来的输入",
             ),
-            ("EXE-014", "XOps 与引擎是两个分立进程，之间只有一条执行契约"),
+            (
+                "EXE-014",
+                "XOps 与引擎之间只有一条执行契约，引擎的概念不泄漏进它（换桩不改一行）",
+            ),
             ("EXE-030", "引擎不可用时如实归入引擎错误类，绝不就地跑"),
         ]
     }
@@ -199,6 +202,21 @@ mod tests {
         let held = IsolationLevel::Bare.still_held();
         for id in ["EXE-004", "EXE-010", "EXE-015", "EXE-014", "EXE-030"] {
             assert!(held.iter().any(|(held, _)| *held == id), "少了 {id}");
+        }
+        // ⚠️ **这张表里不能有 D61 之前的说法。** `EXE-014` 那条曾经写着
+        // "XOps 与引擎是两个分立进程"、`EXE-015` 写着"凭据在 attacored 那一侧"——
+        // 引擎搬进程之后两句都成了假的，**而它们照样被 `still_held()` 当成
+        // "仍然成立的"报出去**：一张说假话的清单比没有清单更糟。
+        // 这条测试盯着它不再回去。
+        let 全文 = held
+            .iter()
+            .map(|(id, why)| format!("{id} {why}"))
+            .collect::<String>();
+        for 过时的 in ["attacored", "两个分立进程"] {
+            assert!(
+                !全文.contains(过时的),
+                "still_held 里还留着 D61 之前的说法：{过时的}"
+            );
         }
     }
 

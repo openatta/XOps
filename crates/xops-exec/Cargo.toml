@@ -1,6 +1,6 @@
 [package]
 name = "xops-exec"
-description = "执行契约 · attacored 客户端 · 执行后端。XOps 与执行引擎之间唯一的接缝。"
+description = "执行契约 · 嵌入式引擎 · 失败分类。XOps 与执行引擎之间唯一的接缝。"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

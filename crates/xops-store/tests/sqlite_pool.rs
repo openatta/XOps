@@ -194,3 +194,53 @@ fn 关掉读连接也一切照常() {
         Some(b"v".as_slice())
     );
 }
+
+#[test]
+fn schema问得出这个库里实际有哪些表() {
+    // ⚠️ **这个口子是契约自证用的**，而它必须住在这个 crate 里：
+    // `CON-012` 说 `rusqlite` 只允许出现在 `xops-store`，
+    // 有一条枚举全仓的测试证明那件事。调用方读不了 `sqlite_master`。
+    let path = temp_db("schema");
+    let _scratch = Scratch(path.clone());
+    let store = Arc::new(xops_store::SqliteStore::open(&path).unwrap());
+
+    let schema = store.schema().unwrap();
+    let kv = schema
+        .iter()
+        .find(|(table, _)| table == "kv")
+        .expect("物理 schema 只有一张 kv 表（sql:table.kv）");
+    assert_eq!(kv.1, vec!["space", "key", "value"], "三列，一列不多");
+
+    // ⚠️ **关系投影表是运行时声明的**，谁声明了才有——
+    // 这正是"问跑起来的东西，不问源码"要的那件事：
+    // 一个没被装配起来的服务，它的投影表就不该出现在这里。
+    assert!(
+        !schema.iter().any(|(table, _)| table.starts_with("rel_")),
+        "还没有人 declare 过，一张投影表都不该有：{schema:?}"
+    );
+
+    let relations = store.relations();
+    relations
+        .declare(&xops_store::Relation {
+            name: "widgets".into(),
+            columns: vec![xops_store::Column {
+                name: "owner".into(),
+                kind: xops_store::ValueKind::Text,
+                indexed: true,
+            }],
+        })
+        .unwrap();
+
+    let schema = store.schema().unwrap();
+    let projection = schema
+        .iter()
+        .find(|(table, _)| table == "rel_widgets")
+        .expect("声明过之后它就在了（sql:meta.relation-naming）");
+    assert_eq!(projection.1, vec!["row", "owner", "payload"]);
+
+    // 内部索引不该混进来。
+    assert!(
+        !schema.iter().any(|(table, _)| table.starts_with("sqlite_")),
+        "sqlite 自己的东西不是我们的 schema：{schema:?}"
+    );
+}

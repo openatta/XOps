@@ -87,7 +87,7 @@ jobs:
           node scripts/contracts.mjs check
           # dump 写出来的方言文件必须和仓里那一份一模一样。
           # ⚠️ 不比这一下的话，**改了接口却没提交方言文件**照样绿。
-          git diff --exit-code -- docs/contracts/api/ || {
+          git diff --exit-code -- docs/contracts/api/ docs/contracts/data/ || {
             echo "::error::方言文件和实现对不上 —— 本地跑一次 `node scripts/contracts.mjs dump` 再提交"
             exit 1
           }

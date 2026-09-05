@@ -24,6 +24,7 @@ BAD=0
 步 "Rust · 测试"            cargo test --workspace
 步 "契约 · 问实现"          bash -c 'cargo build -p xopsd && node scripts/contracts.mjs dump'
 步 "契约 · 比基线"          node scripts/contracts.mjs check
+步 "契约 · 方言文件与实现一致" git diff --exit-code -- docs/contracts/api docs/contracts/data
 步 "页面嵌进去了没有（D55）" bash -c '
   n=$(./target/debug/xopsd --dump-contracts | python3 -c "import json,sys; print(json.load(sys.stdin)[\"embeddedAssets\"])")
   echo "   嵌进去 $n 个文件"; [ "$n" -gt 0 ]'

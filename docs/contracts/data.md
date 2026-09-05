@@ -249,3 +249,113 @@ sql:meta.projection.<规则>           事件到当前视图的投影规则
 - ⚠️ 它**不在 `CON-012` 的禁用清单里**，也不构成能力依赖：代码语义与它无关，
   关掉一切照常，只是读重新排在写后面。同 `WITHOUT ROWID` 一类——
   **是性能选择，不是能力依赖**。换到 MySQL / PostgreSQL 时它根本不需要。
+
+### Element: sql:relation.rel_audit.column.actor
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：谁干的。
+
+### Element: sql:relation.rel_audit.column.at
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：什么时候。
+
+### Element: sql:relation.rel_audit.column.kind
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：事件类型。
+
+### Element: sql:relation.rel_audit.column.orderKey
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：全序键。审计要能稳定重放，序不能靠时间戳。
+
+### Element: sql:relation.rel_audit.column.payload
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：整行的原文。**投影是缓存不是账**——权威永远在 `kv` 里那一份（`D60`）。
+
+### Element: sql:relation.rel_audit.column.project
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：哪个项目。跨项目聚合与按项目过滤都靠它。
+
+### Element: sql:relation.rel_audit.column.row
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：行标识（26 字符文本形态），主键。
+
+### Element: sql:relation.rel_audit.column.subject
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：事件主体。
+
+### Element: sql:relation.rel_audit.column.target
+- module: xops-store
+- consumers: [xops-store]
+- `rel_audit` 的一列：事件落在哪一行。
+
+### Element: sql:relation.rel_flow_instances.column.expiresAt
+- module: xops-store
+- consumers: [xops-store]
+- `rel_flow_instances` 的一列：到期时刻。
+
+### Element: sql:relation.rel_flow_instances.column.payload
+- module: xops-store
+- consumers: [xops-store]
+- `rel_flow_instances` 的一列：整行的原文。**投影是缓存不是账**——权威永远在 `kv` 里那一份（`D60`）。
+
+### Element: sql:relation.rel_flow_instances.column.project
+- module: xops-store
+- consumers: [xops-store]
+- `rel_flow_instances` 的一列：哪个项目。跨项目聚合与按项目过滤都靠它。
+
+### Element: sql:relation.rel_flow_instances.column.row
+- module: xops-store
+- consumers: [xops-store]
+- `rel_flow_instances` 的一列：行标识（26 字符文本形态），主键。
+
+### Element: sql:relation.rel_flow_instances.column.state
+- module: xops-store
+- consumers: [xops-store]
+- `rel_flow_instances` 的一列：实例状态。按状态找在途实例。
+
+### Element: sql:relation.rel_flow_instances.column.subjectId
+- module: xops-store
+- consumers: [xops-store]
+- `rel_flow_instances` 的一列：主体标识。同一主体上的实例按它找。
+
+### Element: sql:relation.rel_flow_instances.column.subjectKind
+- module: xops-store
+- consumers: [xops-store]
+- `rel_flow_instances` 的一列：主体种类。
+
+### Element: sql:relation.rel_notices.column.createdAt
+- module: xops-store
+- consumers: [xops-store]
+- `rel_notices` 的一列：产生时刻。个人看板按它倒序。
+
+### Element: sql:relation.rel_notices.column.payload
+- module: xops-store
+- consumers: [xops-store]
+- `rel_notices` 的一列：整行的原文。**投影是缓存不是账**——权威永远在 `kv` 里那一份（`D60`）。
+
+### Element: sql:relation.rel_notices.column.readAt
+- module: xops-store
+- consumers: [xops-store]
+- `rel_notices` 的一列：读过没有。**全系统唯一一个用户可改的系统表列**（`NTF-011`、`I-N`）。
+
+### Element: sql:relation.rel_notices.column.retainUntil
+- module: xops-store
+- consumers: [xops-store]
+- `rel_notices` 的一列：到期时刻。`_notices` 有自己的保留期（默认 3 个月）。
+
+### Element: sql:relation.rel_notices.column.row
+- module: xops-store
+- consumers: [xops-store]
+- `rel_notices` 的一列：行标识（26 字符文本形态），主键。
+
+### Element: sql:relation.rel_notices.column.user
+- module: xops-store
+- consumers: [xops-store]
+- `rel_notices` 的一列：收信人。`NTF-010` 那条行级限定按它查。

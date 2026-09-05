@@ -57,6 +57,31 @@ impl ColumnType {
     ///
     /// 枚举要把取值列出来:模型猜不出来，而猜错一格 `EXE-024` 是**整批不入表**。
     #[must_use]
+    /// 这一种列类型在契约里叫什么（`sql:meta.column-type.<名字>`）。
+    ///
+    /// ⚠️ **这个 `match` 是穷尽的，加一个变体它当场编译不过**——
+    /// 而那一刻你会看见旁边的 [`ColumnType::KINDS`]，于是新变体不会
+    /// **悄悄地**没有契约元素。这就是这个方法存在的全部理由：
+    /// 它不是给谁调用的，是一道**编译期的提醒**。
+    ///
+    /// 名字与 `serde` 的 tag 一致（`rename_all = "kebab-case"`），
+    /// 那也是 CEID 用的那一份。
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Text { .. } => "text",
+            Self::LongText { .. } => "long-text",
+            Self::Integer => "integer",
+            Self::Decimal => "decimal",
+            Self::Bool => "bool",
+            Self::Timestamp => "timestamp",
+            Self::Enum { .. } => "enum",
+            Self::Sequence => "sequence",
+            Self::RowRef => "row-ref",
+            Self::Blob { .. } => "blob",
+            Self::Derived { .. } => "derived",
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             Self::Text { max_len } => format!("文本，最长 {max_len}"),
@@ -184,6 +209,25 @@ impl Column {
 /// 平台在写入时自动补的列位（`TBL-014`）。**任何列声明都不能覆盖它们。**
 pub const AUTO_COLUMNS: [&str; 5] = ["writtenBy", "at", "revision", "_instance", "retainUntil"];
 
+/// 用户表能用的列类型，**契约里那一份名字**（`sql:meta.column-type.*`）。
+///
+/// ⚠️ **它与 [`ColumnType::kind_name`] 是一对**：那个 `match` 是穷尽的，
+/// 加一个变体编译不过；改到那里的时候这张表就在旁边。
+/// 有一条测试盯着两边一样长、且每个名字都真的产得出来。
+pub const COLUMN_KINDS: [&str; 11] = [
+    "text",
+    "long-text",
+    "integer",
+    "decimal",
+    "bool",
+    "timestamp",
+    "enum",
+    "sequence",
+    "row-ref",
+    "blob",
+    "derived",
+];
+
 fn check_text(name: &str, value: &Value, max_len: usize) -> Result<()> {
     let text = value
         .as_str()
@@ -258,6 +302,55 @@ pub fn render_template(
     }
     out.push_str(rest);
     Ok(out)
+}
+
+#[cfg(test)]
+mod 契约自证 {
+    use super::*;
+
+    #[test]
+    fn 列类型的名字与那张表一一对上() {
+        // ⚠️ **这一条守的是「加了变体却没有契约元素」。**
+        // `kind_name` 的 match 是穷尽的（加变体编译不过），而这里保证
+        // 那个 match 产出的每一个名字都在 `COLUMN_KINDS` 里、且反过来也成立。
+        // 少了任何一边，`sql:meta.column-type.*` 那一面的自证就会**悄悄地少一条**。
+        let 每一种 = [
+            ColumnType::Text { max_len: 1 },
+            ColumnType::LongText { max_len: 1 },
+            ColumnType::Integer,
+            ColumnType::Decimal,
+            ColumnType::Bool,
+            ColumnType::Timestamp,
+            ColumnType::Enum { values: vec![] },
+            ColumnType::Sequence,
+            ColumnType::RowRef,
+            ColumnType::Blob { max_bytes: 1 },
+            ColumnType::Derived {
+                template: String::new(),
+            },
+        ];
+        assert_eq!(
+            每一种.len(),
+            COLUMN_KINDS.len(),
+            "COLUMN_KINDS 与实际变体数对不上"
+        );
+        for one in &每一种 {
+            assert!(
+                COLUMN_KINDS.contains(&one.kind_name()),
+                "{} 不在 COLUMN_KINDS 里",
+                one.kind_name()
+            );
+        }
+        // 名字与 serde 的 tag 是同一份 —— CEID 用的正是那一份。
+        for one in &每一种 {
+            let tag = serde_json::to_value(one).unwrap();
+            assert_eq!(
+                tag.get("kind").and_then(serde_json::Value::as_str),
+                Some(one.kind_name()),
+                "kind_name 与 serde tag 分了叉"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

@@ -494,4 +494,54 @@ impl SqliteStore {
     pub fn relations(self: &Arc<Self>) -> Arc<dyn Relations> {
         Arc::new(SqliteRelations::new(Arc::clone(self)))
     }
+
+    /// 这个库里**实际存在**的表与它们的列。**契约自证用**。
+    ///
+    /// ⚠️ **它必须住在这个 crate 里。** `CON-012`：`rusqlite` 只允许出现在
+    /// `xops-store`，有一条枚举全仓的测试证明这件事
+    /// （`tests/no_sqlite_outside_store.rs`）。所以"读一遍 sqlite_master"这件事
+    /// 不能由调用方自己去做——它要在这里露出一个口子。
+    ///
+    /// ⚠️ **回的是「这个库此刻长什么样」，不是「代码里写着什么」。**
+    /// 关系投影表是**运行时声明的**（`Relations::declare`），
+    /// 谁声明了才有——一个没被装配起来的服务，它的投影表就不在这张表里。
+    /// 这正是自证要的那件事：**问跑起来的东西，不问源码。**
+    ///
+    /// 内部索引（`sqlite_*`）不在里面。
+    ///
+    /// # Errors
+    /// 库读不了。
+    pub fn schema(&self) -> Result<Vec<(String, Vec<String>)>> {
+        let connection = self.locked()?;
+        let mut tables: Vec<String> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT name FROM sqlite_master \
+                     WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+                )
+                .map_err(sql_error)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(sql_error)?;
+            rows.collect::<std::result::Result<_, _>>()
+                .map_err(sql_error)?
+        };
+        tables.sort_unstable();
+        let mut out = Vec::with_capacity(tables.len());
+        for table in tables {
+            // `PRAGMA` 不吃参数绑定，而表名来自 `sqlite_master` 本身——
+            // 不是外来输入。上面那条查询已经把它限在这个库里的真表上了。
+            let mut statement = connection
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .map_err(sql_error)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(sql_error)?;
+            let columns: Vec<String> = rows
+                .collect::<std::result::Result<_, _>>()
+                .map_err(sql_error)?;
+            out.push((table, columns));
+        }
+        Ok(out)
+    }
 }

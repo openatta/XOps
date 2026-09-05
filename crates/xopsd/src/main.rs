@@ -134,13 +134,25 @@ fn issue_token(account: Option<&str>) -> ExitCode {
 /// 逐表登记会把基线撑爆，而且它们本来就不是被批准的东西——
 /// 被批准的是"用户能造出什么形状"。
 ///
-/// ⚠️ **装配用一份空的内存配置**：印的是接口面，不该碰任何人的库。
+/// ⚠️ **装配用一份一次性的库**：印的是接口面，不该碰任何人的数据。
+///
+/// # 为什么不是 `:memory:`
+///
+/// `sql:*` 那一面要问的是**这个库里实际有哪些表**，而内存配置走的是
+/// `MemoryStore`——那条路上根本没有 SQL。物理 schema 只有在真的 sqlite 上
+/// 才问得出来，**而关系投影表是运行时声明的**（谁装配起来了才有）。
+/// 所以这里开一个临时文件库，装配一遍，问完就删。
 fn dump_contracts() -> ExitCode {
     log::set_level(log::Level::Off);
+    let scratch = std::env::temp_dir().join(format!(
+        "xops-dump-{}-{}.db",
+        std::process::id(),
+        xops_core::Id::generate()
+    ));
     let config = Config {
         // 这把密钥只为把装配跑通，不写任何东西。
         secret_key: "00".repeat(32),
-        db: ":memory:".to_owned(),
+        db: scratch.display().to_string(),
         ..Config::default()
     };
     let assembled = match assemble(&config) {
@@ -175,10 +187,57 @@ fn dump_contracts() -> ExitCode {
         })
         .collect();
 
+    // ── sql:* 那一面 ────────────────────────────────────────────────
+    //
+    // ⚠️ **只认领问得出来的那几个前缀。** 逻辑系统表（`sql:table._runs` 这些）、
+    // 键的布局（`sql:layout.*`）、投影与命名规则（`sql:meta.projection.*`、
+    // `sql:meta.relation-naming`、`sql:meta.wal`）**是约定，不是能从库里读出来的东西**。
+    // 硬凑一个"自证"出来只会制造一堆假的漂移，而**一个经常误报的检查等于没有检查**。
+    //
+    // 认领不了的那些，`check` 会把前缀报出来——**不自证是一回事，
+    // 悄悄地不自证是另一回事。**
+    let sql_covers = [
+        "sql:table.kv",
+        "sql:relation.",
+        "sql:meta.column-type.",
+        "sql:meta.auto-column.",
+    ];
+    let mut sql: Vec<String> = Vec::new();
+    for kind in xops_table::COLUMN_KINDS {
+        sql.push(format!("sql:meta.column-type.{kind}"));
+    }
+    for auto in xops_table::AUTO_COLUMNS {
+        sql.push(format!("sql:meta.auto-column.{auto}"));
+    }
+    match assembled.schema() {
+        Ok(tables) => {
+            for (table, columns) in tables {
+                let prefix = if table.starts_with("rel_") {
+                    format!("sql:relation.{table}")
+                } else {
+                    format!("sql:table.{table}")
+                };
+                sql.push(prefix.clone());
+                for column in columns {
+                    sql.push(format!("{prefix}.column.{column}"));
+                }
+            }
+        }
+        Err(error) => {
+            eprintln!("读不出物理 schema：{error}");
+            let _ = std::fs::remove_file(&scratch);
+            return ExitCode::FAILURE;
+        }
+    }
+    sql.sort();
+    let _ = std::fs::remove_file(&scratch);
+
     let dump = serde_json::json!({
         "tools": tool_names,
         "specs": tool_specs,
         "routes": routes,
+        "sql": sql,
+        "sqlCovers": sql_covers,
         // ⚠️ **前端产物嵌进来了几个文件**（`D55`）。0 表示这次 `cargo build` 时
         // `web/dist` 不在——而 `assets.rs` 那时**只打一条 warning 就过去了**，
         // 于是二进制里装的是上一版页面，或者干脆没有页面。

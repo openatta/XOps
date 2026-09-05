@@ -71,6 +71,32 @@ pub struct Assembled {
     pub clock: Arc<dyn Clock>,
     /// 目录。**给引导用**——第一个用户与第一份令牌要从这里来。
     pub directory: Arc<Directory>,
+    /// 库那一侧的实现，**只给契约自证用**（`--dump-contracts` 的 `sql:*` 那一面）。
+    ///
+    /// ⚠️ 内存库上是 `None`——那条路上根本没有 SQL。物理 schema 只有在真的 sqlite
+    /// 上才问得出来，**而关系投影表是运行时声明的**：谁装配起来了才有。
+    sqlite: Option<Arc<SqliteStore>>,
+}
+
+impl Assembled {
+    /// 这个库里**实际存在**的表与它们的列。**契约自证用**（`sql:*` 那一面）。
+    ///
+    /// ⚠️ **回的是「这一次装配之后库长什么样」。** 关系投影表是运行时声明的
+    /// （`Relations::declare`），所以这个答案取决于**谁被装配起来了**——
+    /// 那正是自证要的：**问跑起来的东西，不问源码。**
+    ///
+    /// # Errors
+    /// 库读不了；或者这次跑的是内存库（那条路上没有 SQL）。
+    pub fn schema(&self) -> Result<Vec<(String, Vec<String>)>> {
+        self.sqlite.as_ref().map_or_else(
+            || {
+                Err(Error::invalid(
+                    "内存库上没有 SQL —— sql:* 那一面要一个真的 sqlite",
+                ))
+            },
+            |sqlite| sqlite.schema(),
+        )
+    }
 }
 
 /// Git webhook → 一个事件 → 订阅了它的那些任务（`TRG-011`）。
@@ -394,6 +420,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
     // 两条缝一起建：[`Store`] 管事件与键值投影，[`Relations`] 管**带索引的当前视图**。
     // 后者是缓存不是账——需要按别的列找的表独立成一张真表，索引交给数据库，
     // **而不是在键值里手写一条二级索引**。
+    let mut sqlite_for_dump: Option<Arc<SqliteStore>> = None;
     let (store, relations): (Arc<dyn Store>, Arc<dyn Relations>) = if config.in_memory() {
         (
             Arc::new(MemoryStore::new()),
@@ -401,6 +428,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         )
     } else {
         let sqlite = Arc::new(SqliteStore::open(&config.db)?);
+        sqlite_for_dump = Some(Arc::clone(&sqlite));
         let relations = sqlite.relations();
         (sqlite as Arc<dyn Store>, relations)
     };
@@ -795,6 +823,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         flows,
         clock,
         directory,
+        sqlite: sqlite_for_dump,
     })
 }
 

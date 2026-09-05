@@ -13,7 +13,7 @@ pub mod table;
 pub mod tools;
 pub mod writtenby;
 
-pub use column::{AUTO_COLUMNS, Column, ColumnType};
+pub use column::{AUTO_COLUMNS, COLUMN_KINDS, Column, ColumnType};
 pub use engine::{CATALOG_TABLE, Catalog, DropGuard, NoFlows, RowVersion, Tables};
 pub use query::{Filter, MAX_SCAN, Page, Query, matches_all};
 pub use table::{Kind, Protection, TableId, TableSchema, physical_name};

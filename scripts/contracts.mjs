@@ -55,6 +55,8 @@ const NOT_A_RECORD = new Set(['README.md', 'DECISIONS.yaml']);
 const DIALECT_DIR = path.join(CONTRACTS_DIR, 'api');
 const TOOLS_FILE = path.join(DIALECT_DIR, 'mcp-tools.txt');
 const ROUTES_FILE = path.join(DIALECT_DIR, 'http-routes.txt');
+const DATA_DIR = path.join(CONTRACTS_DIR, 'data');
+const SCHEMA_FILE = path.join(DATA_DIR, 'schema.txt');
 
 /* ------------------------------------------------------------------ *
  * 解析：与 XForge core/contract-delta.ts 的正则逐字一致
@@ -461,7 +463,9 @@ async function writeDialects(dump) {
     .join('\n');
   await writeFile(TOOLS_FILE, `${tools}\n`, 'utf8');
   await writeFile(ROUTES_FILE, `${routes}\n`, 'utf8');
-  return { tools: dump.tools.length, routes: dump.routes.length };
+  await mkdir(DATA_DIR, { recursive: true });
+  await writeFile(SCHEMA_FILE, `${[...dump.sql].sort().join('\n')}\n`, 'utf8');
+  return { tools: dump.tools.length, routes: dump.routes.length, sql: dump.sql.length };
 }
 
 /** 基线里登记过的 CEID。 */
@@ -494,6 +498,31 @@ function compare(face, fromImpl, fromBaseline, out) {
   for (const id of missing) {
     out.push(`  基线里有、实现里没有：${id}\n    ——删了接口没撤记。基线正在替一个不存在的东西背书。`);
   }
+}
+
+/**
+ * `sql:*` 那一面。**只比 dump 认领得了的前缀**。
+ *
+ * ⚠️ 逻辑系统表（`sql:table._runs` 这些）、键的布局（`sql:layout.*`）、
+ * 投影与命名规则**是约定，不是能从库里读出来的东西**。硬凑一个"自证"
+ * 只会制造一堆假的漂移，而**一个经常误报的检查等于没有检查**。
+ *
+ * ⚠️ **但认领不了要说出来**——不自证是一回事，**悄悄地不自证是另一回事**。
+ * 没被任何前缀盖住的元素，这里逐条报个数，让人看得见这一面只自证了多少。
+ */
+function compareSql(dump, dataBaseline, out) {
+  const covers = dump.sqlCovers ?? [];
+  const covered = (id) => covers.some((prefix) => id.startsWith(prefix));
+  const impl = new Set(dump.sql ?? []);
+  const baseline = baselineIds(dataBaseline, 'sql:');
+
+  compare(
+    'data',
+    impl,
+    new Set([...baseline].filter(covered)),
+    out,
+  );
+  return [...baseline].filter((id) => !covered(id)).sort();
 }
 
 /** 拿 dump 出来的东西比基线。回一组问题描述。 */
@@ -529,9 +558,10 @@ async function run(command) {
       return 1;
     }
     const counts = await writeDialects(dump);
-    console.log(`已写方言文件：${counts.tools} 个 tool，${counts.routes} 条路由`);
+    console.log(`已写方言文件：${counts.tools} 个 tool，${counts.routes} 条路由，${counts.sql} 条 sql 元素`);
     console.log(`  docs/contracts/api/mcp-tools.txt`);
     console.log(`  docs/contracts/api/http-routes.txt`);
+    console.log(`  docs/contracts/data/schema.txt`);
     return 0;
   }
 
@@ -571,7 +601,9 @@ async function run(command) {
         console.log('   校验的只有记录格式、delta 结构与台账 —— 那是过去唯一有的那一半。');
       } else {
         const api = baselines.get('api')?.source ?? '';
+        const data = baselines.get('data')?.source ?? '';
         const drift = compareAgainstBaseline(dump, api);
+        const uncovered = compareSql(dump, data, drift);
         if (drift.length > 0) {
           console.error(`基线与实现对不上，${drift.length} 处：\n`);
           for (const line of drift) console.error(`${line}\n`);
@@ -579,7 +611,15 @@ async function run(command) {
           console.error('改契约是一个需要具名人拍板的决定。');
           return 1;
         }
-        console.log(`基线与实现对得上：${dump.tools.length} 个 tool，${dump.routes.length} 条路由。`);
+        console.log(
+          `基线与实现对得上：${dump.tools.length} 个 tool，${dump.routes.length} 条路由，`
+          + `${(dump.sql ?? []).length} 条 sql 元素。`,
+        );
+        // ⚠️ **不自证是一回事，悄悄地不自证是另一回事。**
+        if (uncovered.length > 0) {
+          console.log(`   sql 那一面还有 ${uncovered.length} 条没有被自证（是约定，不是能从库里读出来的）：`);
+          console.log(`   ${uncovered.join('  ')}`);
+        }
       }
     }
     console.log(`契约校验通过：${baselines.size} 份基线，${deltas.length} 份 delta，${decisions.size} 条决策。`);

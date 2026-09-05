@@ -1984,3 +1984,33 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   而少了之后横幅上那句"不是完全敞着"就成了假话。
 - ⚠️ 其中「上游」那一条（Grep 1 MB · Glob 1000 项 · 工具结果 50 KB / 500 KB）
   **跟版本时可能变，而它变了没有人会通知我们**——下次跟 attacore 版本要顺手核一遍。
+
+### Element: rust:xops-store#SqliteStore::schema
+- module: xops-store
+- consumers: [xopsd 的契约自证]
+- 这个库里**实际存在**的表与它们的列。
+- ⚠️ **它必须住在这个 crate 里**：`CON-012` 说 `rusqlite` 只允许出现在
+  `xops-store`，有一条枚举全仓的测试证明那件事
+  （`tests/no_sqlite_outside_store.rs`）。所以"读一遍 `sqlite_master`"
+  不能由调用方自己做——**要在这里露一个口子，否则那条边界就得为它破例**。
+- ⚠️ **回的是「这个库此刻长什么样」，不是「代码里写着什么」。**
+  关系投影表是**运行时声明的**（`Relations::declare`），谁声明了才有——
+  一个没被装配起来的服务，它的投影表就不在这张表里。
+  **这正是自证要的那件事：问跑起来的东西，不问源码。**
+- 内部索引（`sqlite_*`）不在里面。
+
+### Element: rust:xopsd#Assembled::schema
+- module: xopsd
+- consumers: [契约治理]
+- 这一次装配之后库长什么样。⚠️ **内存库上是错误**——那条路上根本没有 SQL，
+  而 `--dump-contracts` 因此改成开一个**临时文件库**装配一遍，问完就删。
+
+### Element: rust:xops-table#COLUMN_KINDS
+- module: xops-table
+- consumers: [契约自证]
+- 用户表能用的列类型，**契约里那一份名字**（`sql:meta.column-type.*`）。
+- ⚠️ **它与 `ColumnType::kind_name` 是一对**：那个 `match` 是穷尽的，
+  **加一个变体它当场编译不过**——而那一刻你会看见旁边这张表。
+  于是新变体不会**悄悄地**没有契约元素。
+- 名字与 `serde` 的 tag 一致（`rename_all = "kebab-case"`），CEID 用的正是那一份，
+  有测试盯着两边不分叉。

@@ -38,6 +38,11 @@ XOPS_SECRET_KEY=$(openssl rand -hex 32); export XOPS_SECRET_KEY
 export XOPS_MCP_ADDR="127.0.0.1:$MCP_PORT"
 export XOPS_WEB_ADDR="127.0.0.1:$WEB_PORT"
 export XOPS_WORKSPACES="$NEST/workspaces"
+# 前端产物：有 web/dist 就用它，没有就用编译期嵌进二进制的那一份（`D55`）。
+# ⚠️ **两个都没有的话，深链回落那条断言会红**——那正是它该做的：
+# `assets.rs` 在 `web/dist` 不在时只打一条 warning 就过去了，
+# 于是"二进制里没有页面"这件事没有任何人会说。
+[ -d "$ROOT/web/dist" ] && export XOPS_ASSETS="$ROOT/web/dist"
 export XOPS_LOG=info
 export SCENE_NEST="$NEST"
 
@@ -45,6 +50,15 @@ echo "编译…"
 if ! cargo build --release -p xopsd 2>&1 | tail -1 | grep -q Finished; then
   cargo build --release -p xopsd 2>&1 | tail -20; exit 1
 fi
+
+# Web 会话与 MCP 令牌是**两套凭据**（`I-L` / `BRD-007`），所以两样都要备。
+#
+# ⚠️ **账号名要和签令牌那个一模一样。** `--issue-token` 把账号建在 `builtin` 上
+# （`Directory::bootstrap_token`），预置账号也在 `builtin` 上——名字一致，
+# 两条路才落在同一个用户身上。不一致的话场景照样跑得通，
+# **只是 Web 上看到的是另一个人的空项目列表**，而那不报错。
+export WEB_PW="场景口令"
+export XOPS_LOGIN="alice@scenarios:${WEB_PW},bob@scenarios:${WEB_PW}"
 
 # 第一把令牌只能从命令行来（MCP-002：每次调用都要带令牌，握手也不例外）。
 XOPS_TOKEN=$(./target/release/xopsd --issue-token alice@scenarios 2>/dev/null | tail -1); export XOPS_TOKEN

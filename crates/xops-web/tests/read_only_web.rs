@@ -848,8 +848,8 @@ fn 新加的三条也是只读的() {
     // 所以这里再点名一次这三条。
     for path in [
         "/api/me/notices",
-        "/api/projects/{}/members",
-        "/api/projects/{}/tables",
+        "/api/projects/{project}/members",
+        "/api/projects/{project}/tables",
     ] {
         let route = xops_web::ROUTES
             .iter()

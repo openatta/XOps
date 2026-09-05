@@ -543,13 +543,20 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 
 ### Element: rust:xops-web#ROUTES
 - module: xops-web
-- consumers: [xops-web 的测试]
+- consumers: [xops-web 的测试, 契约治理]
 - 全部路由,**多一条写路由都不行**。`BRD-005` 第 ① 道由枚举这张表来证明。
 - **新增 `GET /healthz`**:存活探针。**不认证、不查库、回话里没有任何信息**——
   版本、项目数、库路径一律不给。⚠️ 它**不是 `MCP-013` 的第五个例外**:
   例外说的是"能写点什么的非 MCP 入口",而它连读都不读。
-- **再新增三条只读路由**：`/api/me/notices` · `/api/projects/{}/members` ·
-  `/api/projects/{}/tables`。三条都是 GET，那条"一条写路由都没有"的枚举测试不放宽。
+- **再新增三条只读路由**：`/api/me/notices` · `/api/projects/{project}/members` ·
+  `/api/projects/{project}/tables`。三条都是 GET，那条"一条写路由都没有"的枚举测试不放宽。
+- **占位段是具名的**（`{project}` / `{board}` / `{table}` / `{row}` / `{column}` /
+  `{instance}`）。名字**不参与匹配**——匹配只看"这一段是不是 `{…}`"——
+  它们的用处是让这张表自己说得清楚。
+  ⚠️ **以前全写成 `{}`**，于是 `api:http.paths.*` 那些 CEID
+  （`/api/projects/{project}/boards/{board}`）**没法从这张表推出来**，
+  只能在别处再维护一份对照。**一张要跟着代码走的对照表迟早会漏一格，
+  而漏的那一格不报错**——`contracts dump` 因此改成直接读这张表。
 
 ### Element: rust:xops-web#Sessions
 - module: xops-web
@@ -1925,3 +1932,17 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - module: xops-read
 - consumers: [xops-web]
 - 这个项目有哪些表。软删掉的不在里面（`TBL-026`）。
+
+### Element: rust:xopsd#dump_contracts
+- module: xopsd
+- consumers: [契约治理, CI]
+- `xopsd --dump-contracts`：把**这个装配实际提供的**接口面印成 JSON
+  （MCP tool 名单与摘要 + 只读 HTTP 路由表）。`scripts/contracts.mjs dump` 拿它写方言文件，
+  `check` 拿方言文件比基线。
+- ⚠️ **问的是装配好的进程，不是源码。** 扫源码只能看见"写下来的"，
+  而这个仓踩过的坑里有一整类是"**写下来了但没接上**"——
+  `BuiltinProvider` 好好地待在 `xops-identity` 里，装配层从来没调过 `with_provider`，
+  于是 Web 上一个人都登不进来。**源码扫描对那一类是瞎的。**
+- ⚠️ **只印静态注册的 tool**（`Registry::specs`），不印表专属那些。
+  `docs/contracts/README.md` §2 那条"**治理生成器，不治理实例**"落到这里就是这一句。
+- 装配用一份 `:memory:` 的空配置：印的是接口面，**不该碰任何人的库**。

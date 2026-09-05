@@ -77,14 +77,14 @@ pub const ROUTES: [Route; 14] = [
     },
     Route {
         method: "GET",
-        path: "/api/projects/{}/members",
+        path: "/api/projects/{project}/members",
         kind: Kind::Read,
         writes_business_objects: false,
         summary: "项目成员与各自的角色（PRJ-007：角色是（项目，用户）上的记录）",
     },
     Route {
         method: "GET",
-        path: "/api/projects/{}/tables",
+        path: "/api/projects/{project}/tables",
         kind: Kind::Read,
         writes_business_objects: false,
         // ⚠️ 它回答的是"有哪些表"，**不是"表里有什么"**。一行数据都不回——
@@ -93,35 +93,35 @@ pub const ROUTES: [Route; 14] = [
     },
     Route {
         method: "GET",
-        path: "/api/projects/{}/boards",
+        path: "/api/projects/{project}/boards",
         kind: Kind::Read,
         writes_business_objects: false,
         summary: "项目里的看板",
     },
     Route {
         method: "GET",
-        path: "/api/projects/{}/boards/{}",
+        path: "/api/projects/{project}/boards/{board}",
         kind: Kind::Read,
         writes_business_objects: false,
         summary: "一个看板的视图",
     },
     Route {
         method: "GET",
-        path: "/api/projects/{}/tables/{}/rows/{}/history",
+        path: "/api/projects/{project}/tables/{table}/rows/{row}/history",
         kind: Kind::Read,
         writes_business_objects: false,
         summary: "单行历史（BRD-006 的前一半）",
     },
     Route {
         method: "GET",
-        path: "/api/projects/{}/tables/{}/instances/{}/settlements",
+        path: "/api/projects/{project}/tables/{table}/instances/{instance}/settlements",
         kind: Kind::Read,
         writes_business_objects: false,
         summary: "同实例的结算行（BRD-006 的后一半）。**与上一条分开查，后端不做 join**",
     },
     Route {
         method: "GET",
-        path: "/api/projects/{}/tables/{}/rows/{}/columns/{}/raw",
+        path: "/api/projects/{project}/tables/{table}/rows/{row}/columns/{column}/raw",
         kind: Kind::Read,
         writes_business_objects: false,
         summary: "长文本原文（BRD-010：供不信任渲染的人自行查看）",
@@ -172,7 +172,12 @@ pub fn match_route(method: &str, path: &str) -> Option<(&'static Route, Vec<Stri
         }
         let mut captured = Vec::new();
         for (expected, found) in template.iter().zip(actual.iter()) {
-            if *expected == "{}" {
+            // 占位段是 `{名字}`。**名字不参与匹配，只用来把这张表说清楚**——
+            // ⚠️ 早先它们全写成 `{}`，于是 `api:http.paths.*` 那些 CEID
+            // （`/api/projects/{project}/boards/{board}`）**没法从这张表推出来**，
+            // 只能在别处再维护一份对照。一张要跟着代码走的对照表迟早会漏一格，
+            // **而漏的那一格不报错**。见 `scripts/contracts.mjs` 的 dump。
+            if expected.starts_with('{') && expected.ends_with('}') {
                 captured.push((*found).to_owned());
             } else if expected != found {
                 return None;
@@ -220,7 +225,7 @@ mod tests {
     #[test]
     fn 路由匹配认得出参数() {
         let (route, captured) = match_route("GET", "/api/projects/P1/boards/B2").expect("该命中");
-        assert_eq!(route.path, "/api/projects/{}/boards/{}");
+        assert_eq!(route.path, "/api/projects/{project}/boards/{board}");
         assert_eq!(captured, vec!["P1", "B2"]);
     }
 

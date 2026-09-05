@@ -1,0 +1,103 @@
+# 四道门，一次跑完。
+#
+# ⚠️ **在这个文件出现之前，四道门全靠人记得。** `cargo test`、`npm run check`、
+# `node scripts/contracts.mjs check`、`scenarios/run.sh` —— **任何一条忘了跑
+# 都不会有人知道**。
+#
+# ⚠️ **顺序不是随便排的**：前端要在 `cargo build` 之前构建完。
+# `web/dist` 是 gitignore 的，而它**在编译期被嵌进二进制**（`D55`）——
+# 顺序反了的话 `assets.rs` 只打一条 warning 就过去了，
+# 于是二进制里没有页面，**而没有任何一处会失败**。最后那一步专门盯着这件事。
+#
+# `scenarios/run.sh` **不在这里**：它要真的模型 key，而且是花钱的。
+# 改了装配层、执行链或任何一处注入位，在本地跑它一遍再提交（`CLAUDE.md`）。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      # ⚠️ **子模块要一起拉。** `vendor/attacore` 是 path 依赖，
+      # 不拉的话 cargo 连依赖都解不开——这一条会以一个看不懂的错失败。
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # ── 前端：先它，因为产物要被嵌进二进制 ──────────────────────────
+      - name: 前端依赖
+        working-directory: web
+        run: npm ci
+
+      - name: 前端 —— 类型 · 只读纪律 · 没有报表
+        working-directory: web
+        run: npm run check
+
+      - name: 前端 —— 测试（含 BRD-009 的对抗性渲染）
+        working-directory: web
+        run: npm test
+
+      - name: 前端 —— 构建（产物随二进制发行，D55）
+        working-directory: web
+        run: npm run build
+
+      # ── Rust ────────────────────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # ⚠️ **用 ./scripts/fmt.sh，不要用 `cargo fmt --all`。**
+      # 后者顺着 path 依赖走进子模块，一次格式化 75 个文件（踩过）。
+      - name: 格式
+        run: ./scripts/fmt.sh --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: 测试
+        run: cargo test --workspace
+
+      # ── 契约：两根模型要对得上 ──────────────────────────────────────
+      - name: 建 xopsd（契约 dump 要问它）
+        run: cargo build -p xopsd
+
+      - name: 契约 —— 问实现，再比基线
+        run: |
+          node scripts/contracts.mjs dump
+          node scripts/contracts.mjs check
+          # dump 写出来的方言文件必须和仓里那一份一模一样。
+          # ⚠️ 不比这一下的话，**改了接口却没提交方言文件**照样绿。
+          git diff --exit-code -- docs/contracts/api/ || {
+            echo "::error::方言文件和实现对不上 —— 本地跑一次 `node scripts/contracts.mjs dump` 再提交"
+            exit 1
+          }
+
+      # ── 最后一条：二进制里真的装着页面 ──────────────────────────────
+      - name: 页面嵌进去了没有（D55）
+        run: |
+          n=$(./target/debug/xopsd --dump-contracts | python3 -c 'import json,sys; print(json.load(sys.stdin)["embeddedAssets"])')
+          echo "嵌进去 $n 个文件"
+          # ⚠️ 0 的意思是 `cargo build` 那一刻 `web/dist` 不在。
+          # `assets.rs` 那时**只打一条 warning**，二进制照样出得来，
+          # 而它跑起来只有 API、没有页面 —— **不报错**。
+          [ "$n" -gt 0 ] || { echo "::error::web/dist 没被嵌进二进制"; exit 1; }

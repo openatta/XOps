@@ -17,15 +17,31 @@
  *      所以 `check` 会在还有未合并的 delta 时提醒。见 docs/contracts/README.md §5。
  *
  * 用法：
- *   node scripts/contracts.mjs check     校验基线、delta 与决策台账；有问题退出码 1
+ *   node scripts/contracts.mjs dump      问二进制"你实际提供什么"，写进方言文件
+ *   node scripts/contracts.mjs check     校验基线、delta、台账，**并比对基线与实现**
  *   node scripts/contracts.mjs sync      把 delta 合并进基线并删除已合并的 delta 目录
  *
- * 无外部依赖，只用 Node 内置模块。有 Rust 之后，这两个子命令搬进
- * `cargo xtask contracts` —— 届时再加上 `dump`
- * （实现侧自证：MCP tool 列表 + 路由表 + sqlite schema + cargo-public-api）。
+ * # 两根模型（README §3）
+ *
+ * ```text
+ * 基线   docs/contracts/*.md              上一次被批准的接口记录
+ * 实现   docs/contracts/{api,rust,data}/  服务今天真正提供的接口，由 dump 自证
+ * check = diff(基线, 实现)
+ * ```
+ *
+ * ⚠️ **实现那一根以前是空的。** 基线是散文，`check` 只校验记录格式、delta 结构
+ * 与台账——**没有任何东西证明代码长得跟基线一样**。一条加了但没登记的路由、
+ * 一个删了但基线还留着的 tool，都不会被谁说一句。
+ *
+ * 现在补上了两面：`api:mcp.tool.*` 与 `api:http.paths.*`，
+ * 来源是 `xopsd --dump-contracts`——**问的是装配好的进程，不是源码**。
+ * `sql:*` 与 `rust:*` 还欠着，见 `check` 里那段注释。
+ *
+ * 无外部依赖，只用 Node 内置模块。有 `cargo xtask` 之后这几个子命令搬过去。
  */
 
-import { readdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, writeFile, mkdir, rm, stat } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -35,6 +51,10 @@ const DELTAS_DIR = path.join(CONTRACTS_DIR, 'deltas');
 const LEDGER_PATH = path.join(CONTRACTS_DIR, 'DECISIONS.yaml');
 /** 直接位于 docs/contracts/ 下、但不是基线记录的文件。 */
 const NOT_A_RECORD = new Set(['README.md', 'DECISIONS.yaml']);
+/** 方言文件（实现那一根）落在哪。 */
+const DIALECT_DIR = path.join(CONTRACTS_DIR, 'api');
+const TOOLS_FILE = path.join(DIALECT_DIR, 'mcp-tools.txt');
+const ROUTES_FILE = path.join(DIALECT_DIR, 'http-routes.txt');
 
 /* ------------------------------------------------------------------ *
  * 解析：与 XForge core/contract-delta.ts 的正则逐字一致
@@ -399,6 +419,101 @@ function checkBreaking(delta, decisions) {
   }
 }
 
+
+/* ------------------------------------------------------------------ *
+ * 实现那一根：dump 与比对
+ * ------------------------------------------------------------------ */
+
+/**
+ * 问二进制"你实际提供什么"。
+ *
+ * ⚠️ **问的是装配好的进程，不是源码。** 扫源码只能看见"写下来的"，
+ * 而这个仓踩过的坑里有一整类是"写下来了但没接上"——
+ * 装配层从来没调过 `with_provider`，源码里那个 `BuiltinProvider` 好好地待着。
+ */
+function askBinary() {
+  const candidates = [
+    path.join(ROOT, 'target/debug/xopsd'),
+    path.join(ROOT, 'target/release/xopsd'),
+  ];
+  for (const binary of candidates) {
+    try {
+      const out = execFileSync(binary, ['--dump-contracts'], {
+        encoding: 'utf8',
+        env: { ...process.env, XOPS_LOG: 'off' },
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      return JSON.parse(out);
+    } catch {
+      // 下一个候选。
+    }
+  }
+  return null;
+}
+
+/** dump 出来的东西写成方言文件 —— 一行一条，好 diff、好在评审里读。 */
+async function writeDialects(dump) {
+  await mkdir(DIALECT_DIR, { recursive: true });
+  const tools = [...dump.tools].sort().join('\n');
+  const routes = dump.routes
+    .map((route) => `${route.path} ${route.method.toLowerCase()}`)
+    .sort()
+    .join('\n');
+  await writeFile(TOOLS_FILE, `${tools}\n`, 'utf8');
+  await writeFile(ROUTES_FILE, `${routes}\n`, 'utf8');
+  return { tools: dump.tools.length, routes: dump.routes.length };
+}
+
+/** 基线里登记过的 CEID。 */
+function baselineIds(source, prefix) {
+  const ids = new Set();
+  for (const line of source.split(/\r?\n/)) {
+    const match = /^### Element:[ \t]*(\S+)/.exec(line);
+    if (match && match[1].startsWith(prefix)) ids.add(match[1]);
+  }
+  return ids;
+}
+
+/**
+ * 比一面。**两个方向都要报**：
+ *
+ * ```text
+ * 实现有、基线没有   加了接口没登记 —— 悄悄多出来的那一条
+ * 基线有、实现没有   删了接口没撤记 —— 基线在替一个不存在的东西背书
+ * ```
+ *
+ * ⚠️ **后一条更容易被忽略**，因为它不影响任何人调用；它的代价是**读基线的人
+ * 相信了一件假的事**，而基线存在的全部意义就是被相信。
+ */
+function compare(face, fromImpl, fromBaseline, out) {
+  const extra = [...fromImpl].filter((id) => !fromBaseline.has(id)).sort();
+  const missing = [...fromBaseline].filter((id) => !fromImpl.has(id)).sort();
+  for (const id of extra) {
+    out.push(`  实现里有、基线里没有：${id}\n    ——加了接口没登记。写一份 delta（${face}）再 sync。`);
+  }
+  for (const id of missing) {
+    out.push(`  基线里有、实现里没有：${id}\n    ——删了接口没撤记。基线正在替一个不存在的东西背书。`);
+  }
+}
+
+/** 拿 dump 出来的东西比基线。回一组问题描述。 */
+function compareAgainstBaseline(dump, apiBaseline) {
+  const out = [];
+  compare(
+    'api',
+    new Set(dump.tools.map((name) => `api:mcp.tool.${name}`)),
+    baselineIds(apiBaseline, 'api:mcp.tool.'),
+    out,
+  );
+  compare(
+    'api',
+    new Set(dump.routes.map((r) => `api:http.paths.${r.path}.${r.method.toLowerCase()}`)),
+    baselineIds(apiBaseline, 'api:http.paths.'),
+    out,
+  );
+  return out;
+}
+
 /* ------------------------------------------------------------------ *
  * 子命令
  * ------------------------------------------------------------------ */
@@ -406,6 +521,19 @@ function checkBreaking(delta, decisions) {
 async function run(command) {
   const baselines = await loadBaselines();
   const deltas = await loadDeltas();
+
+  if (command === 'dump') {
+    const dump = askBinary();
+    if (dump === null) {
+      console.error('问不到二进制。先 `cargo build -p xopsd`，再跑一次。');
+      return 1;
+    }
+    const counts = await writeDialects(dump);
+    console.log(`已写方言文件：${counts.tools} 个 tool，${counts.routes} 条路由`);
+    console.log(`  docs/contracts/api/mcp-tools.txt`);
+    console.log(`  docs/contracts/api/http-routes.txt`);
+    return 0;
+  }
 
   let decisions = new Set();
   if (await exists(LEDGER_PATH)) {
@@ -433,6 +561,27 @@ async function run(command) {
   }
 
   if (command === 'check') {
+    // ⚠️ **有未合并的 delta 时不比对。** delta 声明的正是"这次要加的那些"，
+    // 那时实现比基线多出几条是**正常状态**，报出来只会训练人忽略它。
+    // 一个经常误报的检查等于没有检查。
+    if (deltas.length === 0) {
+      const dump = askBinary();
+      if (dump === null) {
+        console.log('⚠️  没问到二进制（先 `cargo build -p xopsd`），**这次没有比对基线与实现**。');
+        console.log('   校验的只有记录格式、delta 结构与台账 —— 那是过去唯一有的那一半。');
+      } else {
+        const api = baselines.get('api')?.source ?? '';
+        const drift = compareAgainstBaseline(dump, api);
+        if (drift.length > 0) {
+          console.error(`基线与实现对不上，${drift.length} 处：\n`);
+          for (const line of drift) console.error(`${line}\n`);
+          console.error('见 docs/contracts/README.md §3、§4。**实现与契约不一致时改实现**——');
+          console.error('改契约是一个需要具名人拍板的决定。');
+          return 1;
+        }
+        console.log(`基线与实现对得上：${dump.tools.length} 个 tool，${dump.routes.length} 条路由。`);
+      }
+    }
     console.log(`契约校验通过：${baselines.size} 份基线，${deltas.length} 份 delta，${decisions.size} 条决策。`);
     if (deltas.length > 0) {
       const changes = [...new Set(deltas.map((d) => d.change))].join('、');
@@ -459,8 +608,8 @@ async function run(command) {
 }
 
 const command = process.argv[2];
-if (!['check', 'sync'].includes(command)) {
-  console.error('用法：node scripts/contracts.mjs <check|sync>');
+if (!['check', 'sync', 'dump'].includes(command)) {
+  console.error('用法：node scripts/contracts.mjs <dump|check|sync>');
   process.exit(2);
 }
 process.exit(await run(command));

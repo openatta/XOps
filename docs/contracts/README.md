@@ -77,14 +77,28 @@ XOps 有两处接口是运行时生成的，**基线只记生成规则，不记�
 ```
 基线   docs/contracts/*.md       上一次被批准的接口记录。变更进行中无人写它
 实现   docs/contracts/{api,rust,data}/**  服务今天真正提供的接口
-        有代码之后由 `cargo xtask contracts dump` 自证：
-        MCP tool 列表 + 路由表 + sqlite schema + cargo-public-api
+        由 `node scripts/contracts.mjs dump` 自证
 
 check = diff(基线, 实现) 减去本次 delta 已声明的元素；非空即红
 ```
 
-现在仓里一行实现都没有，`dump` 那一半空转，`check` 只校验记录格式、delta 结构与决策台账。
-**这不是简化版，是同一套东西的早期状态**——实现落地时补上 `dump`，判定规则一个字不用改。
+**两面已经接上了**（2026-09-05）：`api:mcp.tool.*` 与 `api:http.paths.*`，
+来源是 `xopsd --dump-contracts`——**问的是装配好的进程，不是源码**。
+
+⚠️ **为什么必须问进程。** 扫源码只看得见"写下来的"，而这个仓踩过的坑里有一整类是
+"**写下来了但没接上**"：`BuiltinProvider` 好好地待在 `xops-identity` 里，
+装配层从来没调过 `with_provider`，于是 Web 上一个人都登不进来、日志里一个字都没有。
+**源码扫描对那一类是瞎的。**
+
+⚠️ **它第一次跑就撞出 29 处漂移**：基线登记了 71 个 tool 里的 48 个，
+漏的那 23 个里有整条技能生命周期与整条任务生命周期。在那之前，
+`check` 校验的只有记录格式、delta 结构与台账——**没有任何东西证明代码长得跟基线一样**。
+
+还欠两面：`sql:*`（sqlite schema dump）与 `rust:*`（cargo-public-api 快照）。
+**判定规则一个字不用改**，补的只是"实现"那一根的两个来源。
+
+⚠️ **有未合并的 delta 时不比对。** 那时实现比基线多出几条是正常状态，
+报出来只会训练人忽略它——**一个经常误报的检查等于没有检查**。
 
 ## 4. 改一条接口要做什么
 
@@ -92,9 +106,10 @@ check = diff(基线, 实现) 减去本次 delta 已声明的元素；非空即�
 ① 在 docs/contracts/deltas/<变更名>/<面>.md 写一份 delta，五节齐全，无变化写 (none)
 ② 破坏性变更额外在 DECISIONS.yaml 记一条，四个字段齐全，decidedBy 写真实身份
 ③ 改实现
-④ node scripts/contracts.mjs check      声明与基线对不对得上
-⑤ node scripts/contracts.mjs sync       合进基线、删掉已合并的 delta
-⑥ 提交 —— 实现与基线的变化在同一次提交里
+④ node scripts/contracts.mjs dump       问二进制"你实际提供什么"（要先 cargo build -p xopsd）
+⑤ node scripts/contracts.mjs check      声明与基线对不对得上，**并比对基线与实现**
+⑥ node scripts/contracts.mjs sync       合进基线、删掉已合并的 delta
+⑦ 提交 —— 实现与基线的变化在同一次提交里
 ```
 
 **这一轮之后留在历史里的是什么：**

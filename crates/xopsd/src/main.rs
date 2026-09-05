@@ -24,6 +24,7 @@ fn main() -> ExitCode {
         Some("--generate-key") => generate_key(),
         Some("--check") => run(true),
         Some("--issue-token") => issue_token(args.get(1).map(String::as_str)),
+        Some("--dump-contracts") => dump_contracts(),
         Some("--help" | "-h") => {
             println!("{}", help());
             ExitCode::SUCCESS
@@ -46,6 +47,10 @@ fn help() -> &'static str {
        xopsd                 起两个服务面\n  \
        xopsd --check         装配一遍并打印横幅，不监听\n  \
        xopsd --generate-key  生成一把加密密钥\n  \
+       xopsd --dump-contracts\n        \
+                             把**这个装配实际提供的**接口面印成 JSON：\n        \
+                             MCP tool 名单 + 只读 HTTP 路由表。\n        \
+                             契约那一侧拿它去比基线 —— 见 scripts/contracts.mjs dump\n  \
        xopsd --issue-token <账号>\n        \
                              给这个账号签一把 MCP 令牌（不在就先建）。\n        \
                              **引导用**：第一把令牌只能这样来 —— 签令牌本身要令牌\n\
@@ -113,6 +118,80 @@ fn issue_token(account: Option<&str>) -> ExitCode {
         }
         Err(error) => {
             eprintln!("签不出来：{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// 把这个装配实际提供的接口面印出来。**契约的另一半**。
+///
+/// `docs/contracts/README.md` §3 说 `check = diff(基线, 实现)`，
+/// 而"实现"那一侧一直是空的：基线是散文，**没有任何东西证明代码长得跟它一样**。
+/// 这条命令补的就是那一半。
+///
+/// ⚠️ **只印静态注册的 tool**（`Registry::specs`），不印表专属那些。
+/// README 那条"**治理生成器，不治理实例**"落到这里就是这一句：
+/// 逐表登记会把基线撑爆，而且它们本来就不是被批准的东西——
+/// 被批准的是"用户能造出什么形状"。
+///
+/// ⚠️ **装配用一份空的内存配置**：印的是接口面，不该碰任何人的库。
+fn dump_contracts() -> ExitCode {
+    log::set_level(log::Level::Off);
+    let config = Config {
+        // 这把密钥只为把装配跑通，不写任何东西。
+        secret_key: "00".repeat(32),
+        db: ":memory:".to_owned(),
+        ..Config::default()
+    };
+    let assembled = match assemble(&config) {
+        Ok(assembled) => assembled,
+        Err(error) => {
+            eprintln!("装配失败：{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut tools: Vec<(&str, &str)> = assembled
+        .mcp
+        .registry()
+        .specs()
+        .map(|spec| (spec.name().as_str(), spec.summary()))
+        .collect();
+    tools.sort_unstable();
+    let tool_names: Vec<&str> = tools.iter().map(|(name, _)| *name).collect();
+    let tool_specs: Vec<serde_json::Value> = tools
+        .iter()
+        .map(|(name, summary)| serde_json::json!({ "name": name, "summary": summary }))
+        .collect();
+
+    let routes: Vec<serde_json::Value> = xops_web::ROUTES
+        .iter()
+        .map(|route| {
+            serde_json::json!({
+                "method": route.method,
+                "path": route.path,
+                "writesBusinessObjects": route.writes_business_objects,
+            })
+        })
+        .collect();
+
+    let dump = serde_json::json!({
+        "tools": tool_names,
+        "specs": tool_specs,
+        "routes": routes,
+        // ⚠️ **前端产物嵌进来了几个文件**（`D55`）。0 表示这次 `cargo build` 时
+        // `web/dist` 不在——而 `assets.rs` 那时**只打一条 warning 就过去了**，
+        // 于是二进制里装的是上一版页面，或者干脆没有页面。
+        // 门里要有一条盯着它：`web/dist` 是 gitignore 的，**顺序错了就静默降级**。
+        "embeddedAssets": xops_web::Assets::embedded_count(),
+    });
+    match serde_json::to_string_pretty(&dump) {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("印不出来：{error}");
             ExitCode::FAILURE
         }
     }

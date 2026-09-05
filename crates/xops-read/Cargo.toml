@@ -19,5 +19,11 @@ xops-notice.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+# ⚠️ 这个 crate 以前一条集成测试都没有 —— 见 tests/read_model.rs 顶上那段。
+# 两条依赖都已经在上面，这里是为了让 tests/ 直接 use 它们。
+xops-audit.workspace = true
+xops-notice.workspace = true
+
 [lints]
 workspace = true

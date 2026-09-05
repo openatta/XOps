@@ -13,5 +13,13 @@ export default defineConfig({
       '/session': 'http://127.0.0.1:8080',
     },
   },
-  test: { environment: 'node' },
+  test: {
+    // ⚠️ **以前是 `'node'`，于是任何带 JSX 或 hook 的文件根本渲染不起来。**
+    // 13 个源文件里有测试的只有 2 个（都是纯函数），页面那一层是**测不了**，
+    // 不是"没写"。`BRD-009` 说恶意内容"**必须实际构造验证，不能只做代码审查**"——
+    // 而断言 AST 与断言渲染之后的 DOM 不是一回事。
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test-setup.ts'],
+  },
 })

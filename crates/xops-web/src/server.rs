@@ -240,19 +240,19 @@ impl WebServer {
                     "truncated": truncated,
                 }))
             }
-            "/api/projects/{}/members" => {
+            "/api/projects/{project}/members" => {
                 let project = parse_project(&captured[0])?;
                 serde_json::to_value(json!({"members": self.model.members(viewer, project)?}))
             }
-            "/api/projects/{}/tables" => {
+            "/api/projects/{project}/tables" => {
                 let project = parse_project(&captured[0])?;
                 serde_json::to_value(json!({"tables": self.model.tables(viewer, project)?}))
             }
-            "/api/projects/{}/boards" => {
+            "/api/projects/{project}/boards" => {
                 let project = parse_project(&captured[0])?;
                 serde_json::to_value(json!({"boards": self.model.boards(viewer, project)?}))
             }
-            "/api/projects/{}/boards/{}" => {
+            "/api/projects/{project}/boards/{board}" => {
                 let board = xops_read::BoardId::from_id(Id::parse(&captured[1])?);
                 let query = Query::parse(&request.query);
                 let limit = query
@@ -262,13 +262,13 @@ impl WebServer {
                 let offset = query.number("offset").unwrap_or(0);
                 serde_json::to_value(self.model.board(viewer, board, offset, limit)?)
             }
-            "/api/projects/{}/tables/{}/rows/{}/history" => {
+            "/api/projects/{project}/tables/{table}/rows/{row}/history" => {
                 let project = parse_project(&captured[0])?;
                 let table = parse_table(&captured[1])?;
                 let row = RowId::from_id(Id::parse(&captured[2])?);
                 serde_json::to_value(self.model.row_history(viewer, project, &table, row)?)
             }
-            "/api/projects/{}/tables/{}/instances/{}/settlements" => {
+            "/api/projects/{project}/tables/{table}/instances/{instance}/settlements" => {
                 let project = parse_project(&captured[0])?;
                 let table = parse_table(&captured[1])?;
                 let instance = Id::parse(&captured[2])?;
@@ -276,7 +276,7 @@ impl WebServer {
                     "settlements": self.model.settlements(viewer, project, &table, instance)?,
                 }))
             }
-            "/api/projects/{}/tables/{}/rows/{}/columns/{}/raw" => {
+            "/api/projects/{project}/tables/{table}/rows/{row}/columns/{column}/raw" => {
                 let project = parse_project(&captured[0])?;
                 let table = parse_table(&captured[1])?;
                 let row = RowId::from_id(Id::parse(&captured[2])?);

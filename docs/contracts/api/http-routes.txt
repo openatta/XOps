@@ -1,0 +1,14 @@
+/api/me get
+/api/me/notices get
+/api/projects get
+/api/projects/{project}/boards get
+/api/projects/{project}/boards/{board} get
+/api/projects/{project}/members get
+/api/projects/{project}/tables get
+/api/projects/{project}/tables/{table}/instances/{instance}/settlements get
+/api/projects/{project}/tables/{table}/rows/{row}/columns/{column}/raw get
+/api/projects/{project}/tables/{table}/rows/{row}/history get
+/healthz get
+/session delete
+/session post
+/webhooks/git post

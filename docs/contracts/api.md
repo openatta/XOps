@@ -464,39 +464,6 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 - 撞名**明确失败，不覆盖**；中途失败会把这次已经建出来的表撤掉。
 - 实例化之后它们就是**普通的表、流程和插件**，想怎么改就怎么改（`TPL-004`）。
 
-### Element: api:mcp.tool.submit-approval-request
-- module: xops-xforge
-- consumers: [xforge]
-- ⚠️ **tool 的实际名字是 `submit_approval_request`**——带下划线、不合 `<域>.<动作>`。
-  **形状由 XForge 定死，XOps 没有任何设计自由度，只有实现义务**（`XFG-007`、`XFG-010`）。
-  它由 `rust:xops-mcp#ToolName` 里那张写死的白名单放行。
-- 参数照抄规格：`change` · `flow` · `stage` · `transition` · `policyId` ·
-  `revision{stateRevision, contentRevision, policySnapshotDigest, gitBase, gitHead}` ·
-  `governingDigest` · `roles` · `reason`。
-- 处理：**由仓绑定定位项目（找不到 → 明确失败）→ 由 policyId + roles 映射到流程
-  （找不到 → 明确失败）→ 按 `governingDigest` 幂等发起实例（主体 = `governingDigest`）
-  → 立即返回**（`XFG-011`）。**不得重复开单。**
-- `gitHead` **同时作为主体修订**（`XFG-012`）。`reason` 是不可信自由文本，
-  **原样保存，不解析**（`XFG-016`）。
-- 回话是**一个 `text` content item，不带 `structuredContent`**（`XFG-009`）。
-- ⚠️ **发起者 = 调用所用令牌的持有人**：职责分离整个压在这上面，
-  **共用一个令牌会让它整体失效且无声**（`XFG-005`）。
-- ⚠️ **任何"优化"都是破坏性变更**，要走 `DECISIONS.yaml`。
-
-### Element: api:mcp.tool.poll-approval
-- module: xops-xforge
-- consumers: [xforge]
-- ⚠️ **实际名字是 `poll_approval`**，同上：形状定死，没有设计自由度（`XFG-008`）。
-- **必须立即返回，绝不阻塞**；**纯读、无副作用、可安全重复调用**（`XFG-013`、`XFG-014`）。
-- 三种回话：未决 → `pending`；已决 → `decided` + `decision` + `approver{id, role}` +
-  `reason`；**从未提交过 → 明确的未知状态，不是报错**——XForge 会整轮重试，
-  **必须对重试安全**。
-- `approver` 由结算行的 `writtenBy` 解析（`XFG-004`）；`role` 是 **XOps 自己的
-  三个角色名**（`XFG-019`）。
-- ⚠️ **首版不返回 `expiresAt`**：`Q12` 未定。规格里它是可选的——
-  **要与 XForge 侧确认它接受缺席**。
-- 回话同样**不带 `structuredContent`**。
-
 ### Element: api:mcp.tool.xforge.register
 - module: xops-xforge
 - consumers: [agent]
@@ -612,3 +579,168 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
   要看行就去看板那条路（`BRD-001`）。这条界线要守住：一个顺手加上 `?rows=10`
   的版本，就是绕过看板定义的第二条读数据通路。
 - 前端在它之前只知道"有哪些**看板**"，于是**一张还没建看板的表在页面上完全不存在**。
+
+### Element: api:mcp.tool.flow.cancel
+- module: xops-flow
+- consumers: [agent]
+- 取消一个实例。其余节点转为已作废
+
+### Element: api:mcp.tool.flow.list
+- module: xops-flow
+- consumers: [agent]
+- 列出项目里的流程定义与各版本
+
+### Element: api:mcp.tool.flow.start
+- module: xops-flow
+- consumers: [agent]
+- 发起一个实例。**创建的同一步第一个节点随即激活**
+
+### Element: api:mcp.tool.flow.status
+- module: xops-flow
+- consumers: [agent]
+- 查一个实例的状态与**卡在哪**。并行组时激活的可能是多个
+
+### Element: api:mcp.tool.repo.rotate
+- module: xops-repo
+- consumers: [agent]
+- 轮换只读凭据。**旧凭据立即失效**
+
+### Element: api:mcp.tool.repo.unbind
+- module: xops-repo
+- consumers: [agent]
+- 解绑。已备好的工作区按各自生命周期结束
+
+### Element: api:mcp.tool.run.cancel
+- module: xops-dispatch
+- consumers: [agent]
+- 取消一次执行。**已经结束的取消是无操作，不是错误**
+
+### Element: api:mcp.tool.run.status
+- module: xops-dispatch
+- consumers: [agent]
+- 查一次执行的状态
+
+### Element: api:mcp.tool.run.trigger
+- module: xops-dispatch
+- consumers: [agent]
+- 手动触发一个任务。**非阻塞**——返回的是执行标识，不是执行结果
+
+### Element: api:mcp.tool.run.trigger-history
+- module: xops-dispatch
+- consumers: [agent]
+- 查一个任务的触发历史。**含被拒绝与被跳过的**
+
+### Element: api:mcp.tool.schedule.configure
+- module: xops-dispatch
+- consumers: [agent]
+- 配置一个任务的定时调度。**时区必须明确**——「每天 02:00」不说时区等于没说
+
+### Element: api:mcp.tool.schedule.next
+- module: xops-dispatch
+- consumers: [agent]
+- 查一个任务下次什么时候被触发
+
+### Element: api:mcp.tool.skill.create
+- module: xops-skill
+- consumers: [agent]
+- 建一个技能。**上传不执行**——这条路径上没有任何提交执行的调用
+
+### Element: api:mcp.tool.skill.derive
+- module: xops-skill
+- consumers: [agent]
+- 从一份技能派生一份私有副本。**是一次拷贝而不是引用**
+
+### Element: api:mcp.tool.skill.disable
+- module: xops-skill
+- consumers: [agent]
+- 停用一个版本。不再被触发，历史执行记录完整保留
+
+### Element: api:mcp.tool.skill.list
+- module: xops-skill
+- consumers: [agent]
+- 列出我看得见的技能。**别人的私有技能不在其中**
+
+### Element: api:mcp.tool.skill.publish
+- module: xops-skill
+- consumers: [agent]
+- 发布一个版本。**没有过一次成功的测试执行就发布不了**
+
+### Element: api:mcp.tool.skill.read
+- module: xops-skill
+- consumers: [agent]
+- 查技能内容与版本历史
+
+### Element: api:mcp.tool.skill.update
+- module: xops-skill
+- consumers: [agent]
+- 改内容或声明。**产生新版本**，旧版本原样可查
+
+### Element: api:mcp.tool.task.create
+- module: xops-task
+- consumers: [agent]
+- 建一个任务：订阅什么、跑哪个技能、写哪张表、onComplete 挂什么
+
+### Element: api:mcp.tool.task.list
+- module: xops-task
+- consumers: [agent]
+- 列出我看得见的任务
+
+### Element: api:mcp.tool.task.read
+- module: xops-task
+- consumers: [agent]
+- 查一个任务的定义
+
+### Element: api:mcp.tool.task.set-enabled
+- module: xops-task
+- consumers: [agent]
+- 启用或停用。**停用的任务不响应任何触发，包括手动。不提供删除**
+
+### Element: api:mcp.tool.submit_approval_request
+- module: xops-xforge
+- consumers: [xforge]
+- ⚠️ **名字带下划线，不合 `<域>.<动作>`。**
+  **形状由 XForge 定死，XOps 没有任何设计自由度，只有实现义务**（`XFG-007`、`XFG-010`）。
+  它由 `rust:xops-mcp#ToolName` 里那张写死的白名单放行。
+- 参数照抄规格：`change` · `flow` · `stage` · `transition` · `policyId` ·
+  `revision{stateRevision, contentRevision, policySnapshotDigest, gitBase, gitHead}` ·
+  `governingDigest` · `roles` · `reason`。
+- 处理：**由仓绑定定位项目（找不到 → 明确失败）→ 由 policyId + roles 映射到流程
+  （找不到 → 明确失败）→ 按 `governingDigest` 幂等发起实例（主体 = `governingDigest`）
+  → 立即返回**（`XFG-011`）。**不得重复开单。**
+- `gitHead` **同时作为主体修订**（`XFG-012`）。`reason` 是不可信自由文本，
+  **原样保存，不解析**（`XFG-016`）。
+- 回话是**一个 `text` content item，不带 `structuredContent`**（`XFG-009`）。
+- ⚠️ **发起者 = 调用所用令牌的持有人**：职责分离整个压在这上面，
+  **共用一个令牌会让它整体失效且无声**（`XFG-005`）。
+- ⚠️ **任何"优化"都是破坏性变更**，要走 `DECISIONS.yaml`。
+
+### Element: api:mcp.tool.poll_approval
+- module: xops-xforge
+- consumers: [xforge]
+- ⚠️ **名字带下划线**，同上：形状定死，没有设计自由度（`XFG-008`）。
+- **必须立即返回，绝不阻塞**；**纯读、无副作用、可安全重复调用**（`XFG-013`、`XFG-014`）。
+- 三种回话：未决 → `pending`；已决 → `decided` + `decision` + `approver{id, role}` +
+  `reason`；**从未提交过 → 明确的未知状态，不是报错**——XForge 会整轮重试，
+  **必须对重试安全**。
+- `approver` 由结算行的 `writtenBy` 解析（`XFG-004`）；`role` 是 **XOps 自己的
+  三个角色名**（`XFG-019`）。
+- ⚠️ **首版不返回 `expiresAt`**：`Q12` 未定。规格里它是可选的——
+  **要与 XForge 侧确认它接受缺席**。
+- 回话同样**不带 `structuredContent`**。
+
+### Element: api:http.paths./healthz.get
+- module: xops-web
+- consumers: [编排器]
+- 存活探针。**不认证、不查库、回话里没有任何信息**——版本、项目数、库路径一律不给。
+- ⚠️ 它**不是 `MCP-013` 的第五个例外**：例外说的是"能写点什么的非 MCP 入口"，
+  而它连读都不读。
+
+### Element: api:http.paths./webhooks/git.post
+- module: xops-web
+- consumers: [Git 平台]
+- Git webhook。**`MCP-013` 认下的四个例外之一**（`TRG-011`）：验签、按投递标识幂等、
+  立刻返回，**端点内不做任何拉取或执行**（`TRG-012`～`TRG-014`）。
+- ⚠️ **它是这份记录里唯一一条非 GET 的 `api:http.*`。** 那句"`api:http.*` 里
+  一条写路由都没有"要读成"**没有一条写业务对象的路由**"——
+  这一条只产生一个 git 事件，`ROUTES` 上的 `writes_business_objects` 是 `false`，
+  有测试枚举那张表盯着。归 RP-13。

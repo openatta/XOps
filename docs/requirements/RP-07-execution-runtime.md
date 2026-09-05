@@ -12,7 +12,7 @@
 > `IsolationLevel::unsatisfied` 里，有测试盯着。**接容器那天，改的是代码与那张表，不是本文。**
 
 > ⚠️ **引擎嵌在 XOps 进程里,一个进程**(`D61`,2026-09-01)。`EXE-014` 那句"两个分立的进程"
-> 已被改掉,`attacored` 不再是部署的一部分——AttaCore 以 git 子模块固定在 `v0.2.0`,
+> 已被改掉,`attacored` 不再是部署的一部分——AttaCore 以 git 子模块固定在 `v0.2.5`,
 > 经 `runtime::agent::Builder` 嵌入(`crates/xops-exec/src/embedded.rs`)。
 > **代价**:`EXE-017` 只剩一半(abort/OOM 会把 XOps 一起带走)、`EXE-030` 在这条路上是空的。
 > **赚到的**:会话隔离变成结构性的(没有会话池),而且引擎的验收离线每次都真跑。

@@ -253,3 +253,89 @@ fn 引擎的类型不出现在契约里() {
         }
     }
 }
+
+/// 一个先要工具、再说话的回合的**第一趟**：它自己就是一次 API 调用。
+fn tool_call_leg(input_tokens: u64, output_tokens: u64) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::MessageStart {
+            message: MessageStartPayload {
+                id: "msg_tool".into(),
+                model: "claude-sonnet-4-6".into(),
+                role: "assistant".into(),
+                usage: Usage {
+                    input_tokens,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                },
+                stop_reason: None,
+            },
+        },
+        StreamEvent::ContentBlockStart {
+            index: 0,
+            content_block: ContentBlockStart::ToolUse {
+                id: "toolu_1".into(),
+                name: "Glob".into(),
+                input: serde_json::json!({ "pattern": "*" }),
+            },
+        },
+        StreamEvent::ContentBlockStop { index: 0 },
+        StreamEvent::MessageDelta {
+            delta: MessageDeltaPayload {
+                stop_reason: Some(StopReason::ToolUse),
+                stop_sequence: None,
+            },
+            usage: Some(Usage {
+                input_tokens,
+                output_tokens,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            }),
+        },
+        StreamEvent::MessageStop,
+    ]
+}
+
+#[test]
+fn 一个回合来回几趟就把几趟都算进用量() {
+    // ⚠️ **这一条盯的是 `total_usage` 与 `usage` 的分别。**
+    // `TurnOutcome.usage` 是**最后一次** API 调用的用量——上游把话说死了
+    // （"It is not what its name suggests and never was"），读它就会少算：
+    // 下面这个回合来回两趟，读 `usage` 只能看见第二趟的 18。
+    //
+    // `TSK-005` 的单次预算就是拿这个数去比的，**少算意味着预算根本咬不住**。
+    // 这不是推的：同一个技能对同一个仓跑两次，一次报 2817，一次报 365。
+    let (engine, mock) = engine(vec![tool_call_leg(100, 20), one_line_turn("看完了")]);
+    let done = engine.run(&worksheet("先查再说"), &Cancel::new()).unwrap();
+
+    assert_eq!(mock.calls(), 2, "这个回合该来回两趟");
+    assert_eq!(
+        done.tokens_used, 138,
+        "第一趟 100+20 加第二趟 11+7；只读 usage 会得到 18"
+    );
+}
+
+#[test]
+fn 命中缓存的那部分也算进用量() {
+    // ⚠️ `input_tokens` **不含缓存读写**——那是另外两个字段。
+    // 而 `SkillScene` 的系统提示是 `PromptBlock::system_cached` 发的，
+    // 于是它的 token 落在 `cache_creation_input_tokens` 上，
+    // **一个字都不在 `input_tokens` 里**。只加 input + output，
+    // 少算就从缓存这道门原样回来了。
+    let mut leg = one_line_turn("缓存过的");
+    for event in &mut leg {
+        if let StreamEvent::MessageDelta {
+            usage: Some(usage), ..
+        } = event
+        {
+            usage.cache_creation_input_tokens = Some(300);
+            usage.cache_read_input_tokens = Some(40);
+        }
+    }
+    let (engine, _) = engine(vec![leg]);
+    let done = engine.run(&worksheet("说一句话"), &Cancel::new()).unwrap();
+    assert_eq!(
+        done.tokens_used, 358,
+        "11 进 + 7 出 + 300 写缓存 + 40 读缓存"
+    );
+}

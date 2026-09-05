@@ -79,18 +79,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 引擎那一侧的缺口也要说出来() {
-        // ⚠️ 这条盯的不是文案，是**这件事没被吞掉**:
-        // `_runs.tokensUsed` 是少算的，而 `TSK-005` 的预算就是拿它去比的。
-        // **一个看着像真数、实际少算的预算，比没有预算更糟**——
-        // 没有预算至少不会有人以为它在管事。
+    fn 引擎那一侧的缺口这条路还通着() {
+        // ⚠️ 这条盯的不是文案，是**「引擎侧缺口」这条路没有随着表变空而烂掉**。
+        //
+        // 上一条缺口是 `TSK-005` 的 token 少算,`v0.2.5` 跟上 `total_usage`
+        // 之后它没了,于是 `engine_gaps()` 现在是空的——横幅里因此**不该**
+        // 再有那一段。可下一次撞出引擎侧的缺口时,写回那张表就要能打出来:
+        // 一段"因为表一直是空的所以谁也没发现它不打印了"的代码,
+        // 和没有这段代码是一回事。
         let config = Config {
             secret_key: "0a".repeat(32),
             ..Config::default()
         };
-        let text = render(&config, &crate::assemble(&config).unwrap());
-        assert!(text.contains("TSK-005"), "启动时要说出来：{text}");
-        assert!(text.contains("少算"), "而且要说清楚是哪一种不准：{text}");
+        let mut assembled = crate::assemble(&config).unwrap();
+        assert!(
+            assembled.engine_gaps.is_empty(),
+            "上游接了之后这张表该是空的：{:?}",
+            assembled.engine_gaps
+        );
+        assert!(
+            !render(&config, &assembled).contains("引擎那一侧的已知缺口"),
+            "没有缺口就不该吓唬人"
+        );
+
+        assembled.engine_gaps = &[("XXX-000", "假的，只为验这条路还通着")];
+        let text = render(&config, &assembled);
+        assert!(text.contains("XXX-000"), "有缺口就要说出来：{text}");
+        assert!(text.contains("只为验这条路还通着"), "连理由一起说：{text}");
     }
 
     #[test]

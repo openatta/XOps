@@ -265,7 +265,7 @@ impl EmbeddedEngine {
             Ok(done) => Ok(Completed {
                 output: collected.deliverable(),
                 trace: collected.trace,
-                tokens_used: tokens(&done.usage),
+                tokens_used: tokens(&done.total_usage),
                 // 交回来了，**不代表算数**——校验与落表在执行之外（`EXE-023`）。
                 rows: emit.map(|emit| emit.take()).unwrap_or_default(),
             }),
@@ -394,21 +394,32 @@ fn variant(event: &AgentEvent) -> String {
 
 /// 这一回合花了多少 token。
 ///
-/// ⚠️ **它是少算的，而且现在没法算准。** 引擎交回的 `TurnOutcome.usage` 是
-/// **最后一次 API 调用**的用量，不是整个回合的累计——一个回合里模型可能来回好几趟
-/// （`turn-complete` 那行的 `api=4` 就是四趟），前几趟的 token 不在这个数里。
+/// 读的是 **`TurnOutcome.total_usage`：整个回合每一次 API 调用的累计**。
+/// `usage` 那个字段仍然在，但它是**最后一次调用**的用量——上游把话说死了
+/// （"It is not what its name suggests and never was"），保留它只是为了不打断
+/// 已经在读它的宿主。**按名字去读它，就是我们撞过的那个坑。**
 ///
-/// 实测:同一个技能对同一个仓跑两次，一次报 2817，一次报 365。
+/// ⚠️ **v0.2.0 上没有 `total_usage`，那时这个数是少算的**：一个回合里模型可能
+/// 来回好几趟（`turn-complete` 那行的 `api=4` 就是四趟），前几趟不在数里——
+/// 实测同一个技能对同一个仓跑两次，一次报 2817，一次报 365。
+/// `docs/upstream-issues/turn-usage-is-last-call-only.md` 是投上去的那份，
+/// 上游在 `v0.2.5` 接了。**不要删那个文件**，也不要把这里改回 `usage`。
 ///
-/// **这不是一个显示问题**:`TSK-005` 的单次预算就是拿这个数去比的，
-/// 少算意味着预算根本咬不住。
+/// # 为什么四项都算进来
 ///
-/// 引擎那一侧目前拿不出累计数——`AgentEvent` 里只有 `TurnComplete` 带 usage，
-/// 而它带的是同一个最后一次；`ModelInterceptor` 的 `on_message` 看不到 usage。
-/// **所以这条要走 ISSUE 提给上游**（`vendor/attacore` 是只读的），
-/// 在那之前它进启动横幅，和裸跑那八条并列——**降级要看得见**。
+/// `input_tokens` **不含命中缓存的那部分**——缓存读写是两个另外的字段。
+/// 而 `SkillScene` 的系统提示是 `PromptBlock::system_cached` 发出去的，
+/// 于是它的 token 落在 `cache_creation_input_tokens` 里，**一个字都不在
+/// `input_tokens` 上**。只加 input + output，少算就从缓存这道门原样回来了。
+///
+/// 代价是这个数**不等于钱**（缓存读按几分之一计价）。但 `TSK-005` 比的是
+/// **token 上限**，不是账单，而在这两者之间宁可高估——
+/// 一个看着像真数、实际少算的预算，比没有预算更糟。
 fn tokens(usage: &Usage) -> u64 {
-    u64::from(usage.input_tokens) + u64::from(usage.output_tokens)
+    u64::from(usage.input_tokens)
+        + u64::from(usage.output_tokens)
+        + u64::from(usage.cache_creation_input_tokens)
+        + u64::from(usage.cache_read_input_tokens)
 }
 
 fn tokio_util_cancel() -> tokio_util::sync::CancellationToken {

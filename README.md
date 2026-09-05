@@ -79,7 +79,7 @@ TOKEN=$(./target/release/xopsd --issue-token alice)   # **第一把令牌只能�
 
 **默认引擎是桩**:不设 `XOPS_MODEL_KEY` 就是 `StubEngine`——跑得通,什么也没真跑。
 
-**引擎是嵌进来的**(`D61`):AttaCore 以 git 子模块固定在 `v0.2.0`,**一个进程**,
+**引擎是嵌进来的**(`D61`):AttaCore 以 git 子模块固定在 `v0.2.5`,**一个进程**,
 没有 `attacored`。克隆之后要 `git submodule update --init`。
 
 ## 设计文档

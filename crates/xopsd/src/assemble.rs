@@ -52,6 +52,9 @@ pub struct Assembled {
     pub unsatisfied: &'static [(&'static str, &'static str)],
     /// 引擎那一侧的已知缺口。**与隔离无关**，但同样要在启动时说出来。
     pub engine_gaps: &'static [(&'static str, &'static str)],
+    /// 预置了几个能登进 Web 的账号。**0 就是没有人进得去**——
+    /// 这是第三处不能悄悄发生的降级：页面在、路由在、就是登不进去。
+    pub logins: usize,
     pub notices: Arc<Notices>,
     pub dispatcher: Arc<Dispatcher>,
     /// 把跑完的执行落成账。**没有它 `_runs` 就是空的**——
@@ -426,12 +429,44 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
     }
     let audit = Arc::new(audit);
 
-    let directory = Arc::new(Directory::new(
-        Arc::clone(&engine),
-        Arc::clone(&store),
-        Arc::clone(&audit),
-        Arc::clone(&clock),
-    ));
+    // 身份提供方（`IDN-001`：全部登录经同一个接口）。
+    //
+    // ⚠️ **不接它，Web 上一个人都登不进来。** `Directory::new` 一个提供方都没有，
+    // 于是 `POST /session` 一律回"凭证不对"——**页面在、路由在、就是进不去**，
+    // 而且错误上分不出是"没配"还是"打错了"（那个不区分是给探测者的）。
+    // 这是实测撞出来的：起一个 daemon，登录页在，登不进去，日志里一个字都没有。
+    //
+    // 预置账号是 `IDN-002` 的前一半，**部署自测用**；另一半（OAuth）还没接。
+    let mut builtin = xops_identity::user::BuiltinProvider::new();
+    for (account, secret, display) in &config.logins {
+        builtin = builtin.with_account(account.clone(), secret, display.clone());
+    }
+    let directory = Arc::new(
+        Directory::new(
+            Arc::clone(&engine),
+            Arc::clone(&store),
+            Arc::clone(&audit),
+            Arc::clone(&clock),
+        )
+        .with_provider(Box::new(builtin)),
+    );
+    // ⚠️ **「预置」是两件事，不是一件。** 提供方认得这份凭证只是第一半；
+    // `IDN-003` 关着自注册，所以**用户记录也得预先在**，否则
+    // `login` 走到"没被预置或邀请"那一支，回的还是"凭证不对"——
+    // 与口令打错**一模一样**（那个不区分是给探测者的）。
+    // 只接了提供方、忘了这一半的话，症状是"配了账号还是登不进去，且无从查起"。
+    for (account, _, display) in &config.logins {
+        // 已经有了就跳过——重启一次不该失败。
+        let _ = directory.provision(
+            xops_identity::user::ExternalAccount {
+                provider: xops_identity::user::ProviderId::new("builtin")
+                    .map_err(|error| Error::internal(format!("builtin 不合法：{error}")))?,
+                account: account.clone(),
+            },
+            display,
+            None,
+        );
+    }
     let tables = Arc::new(Tables::new(
         Arc::clone(&engine),
         Arc::clone(&catalog),
@@ -443,12 +478,22 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
     // `_notices` 是**平台全局表**，不属于任何项目，所以它在这里建一次。
     tables.ensure_global_tables()?;
 
+    // ⚠️ **通知先建。** 读模型要读它（个人看板，`NTF-001`），
+    // 而这一条以前排在读模型后面——挪上来是因为**装配顺序就是依赖顺序**，
+    // 不是因为哪里报了错。
+    let notices = Arc::new(Notices::new(
+        Arc::clone(&tables),
+        Arc::clone(&relations),
+        Arc::clone(&directory),
+        Arc::clone(&clock),
+    )?);
     let model = Arc::new(ReadModel::new(
         Arc::clone(&engine),
         Arc::clone(&store),
         Arc::clone(&audit),
         Arc::clone(&directory),
         Arc::clone(&tables),
+        Arc::clone(&notices),
         Arc::clone(&clock),
     ));
     let flows = Arc::new(Flows::new(
@@ -581,12 +626,6 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         clock: Arc::clone(&clock),
     }));
 
-    let notices = Arc::new(Notices::new(
-        Arc::clone(&tables),
-        Arc::clone(&relations),
-        Arc::clone(&directory),
-        Arc::clone(&clock),
-    )?);
     // 落账那一环（`EXE-026`）。**执行跑完之后是它把 `_runs` 那一行写下来**——
     // 触发那条路非阻塞（`EXE-021`），所以没有别人在等着做这件事。
     let reaper = Arc::new(
@@ -743,6 +782,7 @@ pub fn assemble(config: &Config) -> Result<Assembled> {
         engine_kind,
         unsatisfied: isolation.unsatisfied(),
         engine_gaps: xops_exec::IsolationLevel::engine_gaps(),
+        logins: config.logins.len(),
         notices,
         dispatcher,
         reaper,

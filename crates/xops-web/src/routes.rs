@@ -41,7 +41,7 @@ pub struct Route {
 }
 
 /// 全部路由。**多一条写路由都不行。**
-pub const ROUTES: [Route; 11] = [
+pub const ROUTES: [Route; 14] = [
     Route {
         method: "GET",
         path: "/healthz",
@@ -63,6 +63,33 @@ pub const ROUTES: [Route; 11] = [
         kind: Kind::Read,
         writes_business_objects: false,
         summary: "我参与的项目",
+    },
+    Route {
+        method: "GET",
+        path: "/api/me/notices",
+        kind: Kind::Read,
+        writes_business_objects: false,
+        // ⚠️ **路径上没有 user 参数，这是刻意的。** NTF-010 说读写被硬限定为
+        // `user = 令牌持有人`——落到这里就是调用方**表达不出**"看别人的"这个请求，
+        // 不是"表达得出但被拒绝"。挂在 /api/me/ 下面，是为了让这条性质
+        // **在路由表上就看得见**。
+        summary: "个人看板：我的未读通知，跨项目一起排（NTF-001 / NTF-014）",
+    },
+    Route {
+        method: "GET",
+        path: "/api/projects/{}/members",
+        kind: Kind::Read,
+        writes_business_objects: false,
+        summary: "项目成员与各自的角色（PRJ-007：角色是（项目，用户）上的记录）",
+    },
+    Route {
+        method: "GET",
+        path: "/api/projects/{}/tables",
+        kind: Kind::Read,
+        writes_business_objects: false,
+        // ⚠️ 它回答的是"有哪些表"，**不是"表里有什么"**。一行数据都不回——
+        // 要看行就去看板那条路（BRD-001）。
+        summary: "项目里有哪些表、各自有哪些列。软删掉的不在里面（TBL-026）",
     },
     Route {
         method: "GET",

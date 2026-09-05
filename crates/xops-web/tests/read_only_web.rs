@@ -22,6 +22,7 @@ struct Fixture {
     model: Arc<ReadModel>,
     tables: Arc<Tables>,
     sessions: Arc<Sessions>,
+    notices: Arc<xops_notice::Notices>,
 }
 
 fn fixtures() -> Vec<Fixture> {
@@ -64,12 +65,23 @@ fn fixtures() -> Vec<Fixture> {
             clock.clone(),
             Arc::clone(&store),
         ));
+        // 个人看板读它（`NTF-001`）。**装配顺序就是依赖顺序**：通知先建。
+        let notices = Arc::new(
+            xops_notice::Notices::new(
+                Arc::clone(&tables),
+                Arc::clone(&relations),
+                Arc::clone(&directory),
+                clock.clone(),
+            )
+            .unwrap(),
+        );
         let model = Arc::new(ReadModel::new(
             Arc::clone(&engine),
             Arc::clone(&store),
             Arc::clone(&audit),
             Arc::clone(&directory),
             Arc::clone(&tables),
+            Arc::clone(&notices),
             clock.clone(),
         ));
         let sessions = Arc::new(Sessions::new(Arc::clone(&store), clock));
@@ -94,6 +106,7 @@ fn fixtures() -> Vec<Fixture> {
             model,
             tables,
             sessions,
+            notices,
         }
     })
     .collect()
@@ -115,9 +128,13 @@ impl Fixture {
     }
 
     fn get(&self, session: Option<&str>, path: &str) -> xops_web::Response {
+        // 测试里 `path` 允许带查询串——按真实解析那样切开，
+        // **不然分页在这一层就永远测不到**。
+        let (path, query) = path.split_once('?').unwrap_or((path, ""));
         self.web.handle(&Request {
             method: "GET".into(),
             path: path.into(),
+            query: query.into(),
             session: session.map(str::to_owned),
             headers: std::collections::BTreeMap::new(),
             body: Vec::new(),
@@ -141,6 +158,10 @@ fn setup(fixture: &Fixture) -> (UserId, String, ProjectId, TableId) {
         .tables
         .ensure_system_tables(project, "acme")
         .unwrap();
+    // ⚠️ `_notices` 是**平台全局表**，不属于任何项目（`TBL-010`、`NTF-014`）——
+    // 它不在 `ensure_system_tables` 里。少了这一句，通知写不进去，
+    // 而 `NTF-008` 说通知写失败**只留痕、绝不回滚业务写**：于是**没有人会报错**。
+    fixture.tables.ensure_global_tables().unwrap();
     let bugs = TableId::user("bugs").unwrap();
     fixture
         .tables
@@ -206,6 +227,7 @@ fn 带着会话去写也没有地方可发() {
             let response = fixture.web.handle(&Request {
                 method: method.into(),
                 path,
+                query: String::new(),
                 session: Some(session.clone()),
                 headers: std::collections::BTreeMap::new(),
                 body: b"{}".to_vec(),
@@ -525,6 +547,7 @@ fn 会话面只建会话不写业务对象() {
         let response = fixture.web.handle(&Request {
             method: "DELETE".into(),
             path: "/session".into(),
+            query: String::new(),
             session: Some(session.clone()),
             headers: std::collections::BTreeMap::new(),
             body: Vec::new(),
@@ -623,6 +646,7 @@ fn webhook_request(body: &str) -> Request {
     Request {
         method: "POST".into(),
         path: "/webhooks/git".into(),
+        query: String::new(),
         session: None,
         headers,
         body: body.as_bytes().to_vec(),
@@ -711,5 +735,284 @@ fn webhook端点不认会话也不给别的方法() {
         let mut get = webhook_request("{}");
         get.method = "GET".into();
         assert_ne!(fixture.web.handle(&get).status, 202, "{label}：只认 POST");
+    }
+}
+
+// ————————————————————— 个人看板 · 成员 · 表清单（2026-09-04 补） —————————————————————
+
+#[test]
+fn 个人看板只给自己那些行() {
+    // `NTF-010`：读写被硬限定为 `user = 令牌持有人`——**这是行级可见性的唯一例外**。
+    // ⚠️ 这条测试盯的不是"过滤对不对"，是**路径上表达不出"看别人的"**：
+    // `/api/me/notices` 上没有 user 参数，换一个会话拿到的就是另一个人的那些行。
+    for fixture in fixtures() {
+        let (_, session, project, _) = setup(&fixture);
+        let bob_session = fixture.sessions.issue(fixture.user("bob")).unwrap();
+        let _ = project;
+
+        let mine = fixture.get(Some(&session), "/api/me/notices");
+        assert_eq!(mine.status, 200, "{}", fixture.label);
+        let body = fixture.body(&mine);
+        assert!(body["notices"].is_array(), "{}", fixture.label);
+        assert_eq!(body["truncated"], serde_json::json!(false), "没到上限");
+
+        let theirs = fixture.body(&fixture.get(Some(&bob_session), "/api/me/notices"));
+        assert!(theirs["notices"].is_array(), "别人也读得到自己的那份");
+    }
+}
+
+#[test]
+fn 个人看板要会话() {
+    for fixture in fixtures() {
+        setup(&fixture);
+        assert_eq!(
+            fixture.get(None, "/api/me/notices").status,
+            401,
+            "{}：只读面一律要会话",
+            fixture.label
+        );
+    }
+}
+
+#[test]
+fn 成员清单非成员看到的与项目不存在一致() {
+    // `PRJ-008`：非成员看到的与项目不存在**是同一个错**——
+    // 分开说等于把"这个项目存在"告诉一个不该知道的人。
+    for fixture in fixtures() {
+        let (_, session, project, _) = setup(&fixture);
+        let outsider = fixture.sessions.issue(fixture.user("mallory")).unwrap();
+
+        let mine = fixture.get(Some(&session), &format!("/api/projects/{project}/members"));
+        assert_eq!(mine.status, 200, "{}", fixture.label);
+        let members = fixture.body(&mine);
+        let list = members["members"].as_array().expect("是个数组");
+        assert_eq!(list.len(), 1, "只有 alice 一个人");
+        assert_eq!(list[0]["role"], serde_json::json!("owner"));
+        assert_eq!(
+            list[0]["display_name"],
+            serde_json::json!("alice"),
+            "显示名在后端解出来——前端没有第二条通路去按 id 换名字"
+        );
+
+        let theirs = fixture.get(Some(&outsider), &format!("/api/projects/{project}/members"));
+        assert_eq!(theirs.status, 404, "{}：与项目不存在一致", fixture.label);
+    }
+}
+
+#[test]
+fn 表清单给的是有哪些表不是表里有什么() {
+    // ⚠️ 这条盯的是**那条界线**：一行数据都不回。
+    // 一个顺手"再回十行"的版本，就是绕过看板定义的第二条读数据通路（`BRD-001`）。
+    for fixture in fixtures() {
+        let (_, session, project, _) = setup(&fixture);
+        let response = fixture.get(Some(&session), &format!("/api/projects/{project}/tables"));
+        assert_eq!(response.status, 200, "{}", fixture.label);
+        let body = fixture.body(&response);
+        let tables = body["tables"].as_array().expect("是个数组");
+
+        let names: Vec<&str> = tables
+            .iter()
+            .filter_map(|table| table["table"].as_str())
+            .collect();
+        assert!(names.contains(&"bugs"), "用户表在里面：{names:?}");
+        assert!(
+            names.iter().any(|name| name.starts_with('_')),
+            "系统表也在里面（页面要靠它说清楚有什么可看）：{names:?}"
+        );
+
+        let bugs = tables
+            .iter()
+            .find(|table| table["table"] == serde_json::json!("bugs"))
+            .expect("找得到 bugs");
+        assert_eq!(bugs["kind"], serde_json::json!("user"));
+        let columns = bugs["columns"].as_array().expect("列是个数组");
+        assert!(
+            columns
+                .iter()
+                .any(|column| column["column"] == serde_json::json!("title")),
+            "列名要在：{columns:?}"
+        );
+
+        // **一行数据都不回。**
+        let serialised = serde_json::to_string(&body).unwrap();
+        assert!(
+            !serialised.contains("\"rows\""),
+            "表清单里出现了行——那是绕过看板的第二条读数据通路：{serialised}"
+        );
+    }
+}
+
+#[test]
+fn 新加的三条也是只读的() {
+    // `BRD-005` 第 ① 道靠枚举 `ROUTES` 证明。加路由的时候最容易破的就是它，
+    // 所以这里再点名一次这三条。
+    for path in [
+        "/api/me/notices",
+        "/api/projects/{}/members",
+        "/api/projects/{}/tables",
+    ] {
+        let route = xops_web::ROUTES
+            .iter()
+            .find(|route| route.path == path)
+            .unwrap_or_else(|| panic!("{path} 不在路由表里"));
+        assert_eq!(route.method, "GET", "{path}");
+        assert!(!route.writes_business_objects, "{path}");
+    }
+}
+
+#[test]
+fn 看板翻得了页而且说得出后面还有没有() {
+    // ⚠️ 这条盯的是一个**不报错的缺陷**：一次给死 200 行、没有第二页，
+    // 一张 201 行的表在页面上就是少一行——看的人不会知道。
+    //
+    // 另一半是顺序：**先排完序再切**。先切再排会稳定地显示最老的那一批，
+    // 而它同样不报错。所以这里排的是倒序，验第一页拿到的是**最新的那些**。
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let (alice, session, project, bugs) = setup(&fixture);
+        let written = WrittenBy::Person { user: alice };
+        for index in 0..5 {
+            fixture
+                .tables
+                .insert(
+                    &written,
+                    Some(project),
+                    &bugs,
+                    json!({"title": format!("第{index}条"), "state": "新建"}),
+                )
+                .unwrap();
+        }
+        let board = fixture
+            .model
+            .define_board(
+                alice,
+                project,
+                xops_read::BoardSpec {
+                    name: "全部".into(),
+                    table: bugs.clone(),
+                    filters: Vec::new(),
+                    sort: Some("title".into()),
+                    direction: xops_read::Direction::Desc,
+                    columns: vec!["title".into()],
+                },
+            )
+            .unwrap()
+            .id;
+
+        let first = fixture.body(&fixture.get(
+            Some(&session),
+            &format!("/api/projects/{project}/boards/{board}?limit=2"),
+        ));
+        assert_eq!(first["rows"].as_array().unwrap().len(), 2, "{label}");
+        assert_eq!(first["offset"], json!(0), "{label}");
+        assert_eq!(first["has_more"], json!(true), "{label}：后面还有三条");
+        assert_eq!(
+            first["rows"][0]["values"]["title"],
+            json!("第4条"),
+            "{label}：倒序的第一页是最新的那些——先切再排会拿到「第0条」"
+        );
+
+        let last = fixture.body(&fixture.get(
+            Some(&session),
+            &format!("/api/projects/{project}/boards/{board}?limit=2&offset=4"),
+        ));
+        assert_eq!(
+            last["rows"].as_array().unwrap().len(),
+            1,
+            "{label}：只剩一条"
+        );
+        assert_eq!(last["offset"], json!(4), "{label}");
+        assert_eq!(last["has_more"], json!(false), "{label}：到头了");
+
+        // ⚠️ 上限是平台的，不是调用方的：`?limit=99999999` 不该变成一次自助拒绝服务。
+        let huge = fixture.body(&fixture.get(
+            Some(&session),
+            &format!("/api/projects/{project}/boards/{board}?limit=99999999"),
+        ));
+        assert_eq!(huge["rows"].as_array().unwrap().len(), 5, "{label}");
+
+        // 手打错的参数该看到第一页，不该看到一屏错误。
+        let typo = fixture.get(
+            Some(&session),
+            &format!("/api/projects/{project}/boards/{board}?limit=abc"),
+        );
+        assert_eq!(typo.status, 200, "{label}");
+    }
+}
+
+#[test]
+fn 查询串不参与路由匹配() {
+    // ⚠️ 查询串是**新加的一条能到达后端的输入**。它绝不能决定命中哪条路由——
+    // 那等于凭空多出一组没有被 `ROUTES` 枚举过的路径，而 `BRD-005` 第 ① 道
+    // 靠的正是"枚举这张表"。
+    for fixture in fixtures() {
+        let (_, session, _, _) = setup(&fixture);
+        assert_eq!(
+            fixture
+                .get(Some(&session), "/api/me?anything=/api/projects")
+                .status,
+            200,
+            "{}",
+            fixture.label
+        );
+        assert_eq!(
+            fixture.get(Some(&session), "/api/nope?x=/api/me").status,
+            404,
+            "{}：查询串救不回一条不存在的路由",
+            fixture.label
+        );
+    }
+}
+
+#[test]
+fn 派生出来的通知真的出现在个人看板上() {
+    // ⚠️ 这条把 RP-17 与 RP-05 之间那条**以前不存在**的线走通：
+    // 通知服务整套都在（派生、五类、行级限定、保留期），
+    // 而只读面上一条通知路由都没有——三份包文档各自把它推给了对方。
+    //
+    // `NTF-002`：通知**只从事件派生**。所以这里发的是一个事件，不是一条通知。
+    for fixture in fixtures() {
+        let label = fixture.label;
+        let (alice, session, project, bugs) = setup(&fixture);
+        let bob = fixture.user("bob");
+        let bob_session = fixture.sessions.issue(bob).unwrap();
+
+        let failures = fixture
+            .notices
+            .notify(&xops_notice::SourceEvent::RowNotSettled {
+                project,
+                instance: "inst-1".into(),
+                table: bugs.as_str().to_owned(),
+                row: "row-1".into(),
+                writer: alice,
+                reason: "发起人自己表态不算数".into(),
+            });
+        assert!(failures.is_empty(), "{label}：{failures:?}");
+
+        let mine = fixture.body(&fixture.get(Some(&session), "/api/me/notices"));
+        let list = mine["notices"].as_array().expect("是个数组");
+        assert_eq!(list.len(), 1, "{label}：alice 该收到这一条");
+        assert_eq!(list[0]["kind"], json!("row-not-settled"), "{label}");
+        assert_eq!(
+            list[0]["project"],
+            json!(project.to_string()),
+            "{label}：跨项目一起排，所以每条都要说清来自哪个项目（NTF-014）"
+        );
+        assert!(
+            list[0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("发起人自己表态不算数"),
+            "{label}：自由文本原样引用（NTF-004），不摘要不改写：{}",
+            list[0]["text"]
+        );
+
+        // `NTF-010`：**读被硬限定为 user = 令牌持有人**——这是行级可见性的唯一例外。
+        let theirs = fixture.body(&fixture.get(Some(&bob_session), "/api/me/notices"));
+        assert_eq!(
+            theirs["notices"].as_array().unwrap().len(),
+            0,
+            "{label}：bob 不该看见 alice 的那一条"
+        );
     }
 }

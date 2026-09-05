@@ -282,6 +282,8 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 ### Element: api:mcp.tool.board.show
 - module: xops-read
 - consumers: [agent]
+- **多一个可选的 `offset`。** agent 会撞上与页面同一堵墙：没有它，
+  一张超过 `limit` 行的表在 tool 这一侧就是"后面那些不存在"——**而它不报错**。
 
 ### Element: api:http.paths./api/me.get
 - module: xops-web
@@ -300,6 +302,16 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
 ### Element: api:http.paths./api/projects/{project}/boards/{board}.get
 - module: xops-web
 - consumers: [web]
+- **多了分页**：`?limit=` `?offset=`，回话里多 `offset` 与 `has_more`。
+- ⚠️ **以前一次给死 200 行，没有第二页。** 一张 201 行的表在页面上就是少一行——
+  **不报错、不为空**，看的人不会知道。这是这条路由上唯一一处会安静给错答案的地方。
+- ⚠️ **回的是"还有没有"，不是"一共几行"。** 一个总数会被读成一个指标
+  （"缺陷 42 条"），而 `BRD-002` 说平台不内建任何报表。**翻页需要的只是这一个布尔。**
+- `limit` 有平台上限。**上限是平台的，不是调用方的**——没有它，`?limit=99999999`
+  就是一次任何人都发得出的自助拒绝服务。参数解析不了当没给，不回 400：
+  一个手打错的 `?limit=abc` 该看到第一页。
+- ⚠️ **查询串不参与路由匹配**，也永远不会决定命中哪条路由——那等于凭空多出一组
+  没被 `ROUTES` 枚举过的路径，而 `BRD-005` 第 ① 道靠的正是枚举那张表。有测试盯着。
 
 ### Element: api:http.paths./api/projects/{project}/tables/{table}/rows/{row}/history.get
 - module: xops-web
@@ -568,3 +580,35 @@ api:http.paths.<路径>.<方法>                 一条只读 HTTP 路由，路�
   往一个专放密钥的字段里塞占位串，`repo.rotate` 会把那串垃圾当成一把真凭据去换。
 - 本地仓的只读证明是**问操作系统**，不是推一次:`git push --dry-run` 走 `file://` 时
   目标目录只读也返回 0，远端那条判定在本地是静默失效的。
+
+### Element: api:http.paths./api/me/notices.get
+- module: xops-web
+- consumers: [web]
+- **个人看板的数据**（`NTF-001`）：`_notices` 上属于我的、还没读的那些行，
+  跨项目一起排（`NTF-014`）。
+- ⚠️ **路径上没有 user 参数，这是刻意的。** `NTF-010` 说读写被硬限定为
+  `user = 令牌持有人`，落到这里就是**调用方表达不出"看别人的"这个请求**——
+  不是"表达得出但被拒绝"。挂在 `/api/me/` 下面而不是 `/api/notices?user=…`，
+  是为了让这条性质在路由表上就看得见。
+- 只回未读。**已读的从这一页消失就是「标记已读」的意思**——
+  个人看板是一份待办，不是一条收件箱时间线。
+- ⚠️ **没有「标记已读」的对应写路由，将来也不会有。** 那是一次 MCP 调用
+  （`NTF-009`、`BRD-005`），页面上给的是命令不是按钮。
+- 有上限，**并且回话里说得出这次被截断了**（`truncated`）。静默截断在这里的
+  表现是"怎么没收到通知"，而那是查起来最慢的一种。
+
+### Element: api:http.paths./api/projects/{project}/members.get
+- module: xops-web
+- consumers: [web]
+- 项目成员与各自的角色（`PRJ-007`：角色是 `(项目, 用户)` 上的一条记录，
+  **不是用户身上的属性**，所以它只能长在项目路径下面）。
+- 非成员看到的与项目不存在一致（`PRJ-008`）——授权走 `ReadProject`，与别的读路由同一道。
+
+### Element: api:http.paths./api/projects/{project}/tables.get
+- module: xops-web
+- consumers: [web]
+- 这个项目有哪些表、各自有哪些列。**软删掉的不在里面**（`TBL-026`）。
+- ⚠️ **它回答的是"有哪些表"，不是"表里有什么"。** 一行数据都不返回——
+  要看行就去看板那条路（`BRD-001`）。这条界线要守住：一个顺手加上 `?rows=10`
+  的版本，就是绕过看板定义的第二条读数据通路。
+- 前端在它之前只知道"有哪些**看板**"，于是**一张还没建看板的表在页面上完全不存在**。

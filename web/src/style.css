@@ -41,3 +41,24 @@ time { opacity: .7; margin-right: .5rem; }
 .login label { display: grid; gap: .25rem; }
 .login input { padding: .4rem .5rem; font: inherit; }
 .markdown :first-child { margin-top: 0; }
+
+/* 路由之后：导航里的项是链接，不是按钮（理由见 router.ts 的 intercept）。 */
+nav ul { list-style: none; padding: 0; margin: 0 0 1rem; }
+nav li a, .boards li a { display: block; padding: .35rem .5rem; border-radius: .3rem; color: inherit; text-decoration: none; }
+nav li a:hover, .boards li a:hover { background: color-mix(in oklab, currentColor 8%, transparent); }
+nav li a small, .boards li small { display: block; font-size: .82em; opacity: .7; }
+nav li a.current { background: color-mix(in oklab, currentColor 14%, transparent); font-weight: 600; }
+.quick a { color: inherit; }
+.boards { list-style: none; padding: 0; }
+
+/* 项目页与个人看板。 */
+.members, .tables { list-style: none; padding: 0; }
+.members li, .tables li { padding: .3rem 0; border-bottom: 1px solid var(--line); }
+.members li small, .tables li small { display: block; font-size: .82em; opacity: .7; }
+.tag { display: inline-block; margin-left: .5rem; padding: 0 .35rem; border: 1px solid var(--line); border-radius: .25rem; font-size: .75em; opacity: .8; }
+.pager { display: flex; gap: .75rem; align-items: center; margin-top: 1rem; }
+.notices { list-style: none; padding: 0; }
+.notices li { padding: .6rem 0; border-bottom: 1px solid var(--line); }
+.notices header { display: flex; gap: .75rem; align-items: baseline; font-size: .85em; opacity: .75; }
+.notice-text { margin: .3rem 0; white-space: pre-wrap; }
+.notice-group { margin-bottom: 1.5rem; }

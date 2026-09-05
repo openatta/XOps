@@ -16,6 +16,19 @@ use std::thread;
 /// 没有新连接时歇多久再看一眼。**它决定停机的反应时间上限。**
 const ACCEPT_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
+/// 个人看板一次给多少条。
+///
+/// ⚠️ **超出的部分不静默丢掉**：回话里带 `truncated`，页面照着说一句。
+/// 这一条的失效表现是"怎么没收到通知"，而那是查起来最慢的一种——
+/// `Notices::unread` 早先"扫前一万行再过滤"的那个坑就长这样。
+const NOTICE_LIMIT: usize = 200;
+
+/// 看板一页给多少行。
+const BOARD_PAGE: usize = 200;
+/// 一页最多能要多少行。**上限是平台的，不是调用方的**——
+/// 没有它，`?limit=99999999` 就是一次任何人都发得出的自助拒绝服务。
+const BOARD_PAGE_MAX: usize = 1_000;
+
 use serde_json::{Value, json};
 use xops_core::{Error, Id, Result, RowId};
 use xops_identity::{Directory, ProjectId};
@@ -79,6 +92,14 @@ impl std::fmt::Debug for WebServer {
 pub struct Request {
     pub method: String,
     pub path: String,
+    /// `?` 后面那一段，**原样**，不含问号。
+    ///
+    /// ⚠️ **它以前被直接丢掉了**（`split('?').next()`），于是任何"翻页"都无处可放，
+    /// 看板一次给死 200 行、没有第二页——**而且不报错**：一张 201 行的表在页面上
+    /// 就是少一行。分页要落在这里，不是再造一条路径。
+    ///
+    /// **路由匹配用的仍然是 `path`**：查询串不参与匹配，也永远不会决定命中哪条路由。
+    pub query: String,
     pub session: Option<String>,
     /// 小写化的请求头。webhook 验签要用（`TRG-012`）。
     pub headers: std::collections::BTreeMap<String, String>,
@@ -208,13 +229,38 @@ impl WebServer {
             "/api/projects" => serde_json::to_value(json!({
                 "projects": self.model.projects(viewer)?,
             })),
+            // 个人看板（`NTF-001`）。⚠️ **没有 user 参数**：`NTF-010` 的硬限定靠
+            // 调用方**表达不出**"看别人的"这个请求兑现，不靠一次检查。
+            "/api/me/notices" => {
+                let (notices, truncated) = self.model.my_notices(viewer, NOTICE_LIMIT)?;
+                serde_json::to_value(json!({
+                    "notices": notices,
+                    "limit": NOTICE_LIMIT,
+                    // ⚠️ **说出来。** 静默截断在这里的表现是"怎么没收到通知"。
+                    "truncated": truncated,
+                }))
+            }
+            "/api/projects/{}/members" => {
+                let project = parse_project(&captured[0])?;
+                serde_json::to_value(json!({"members": self.model.members(viewer, project)?}))
+            }
+            "/api/projects/{}/tables" => {
+                let project = parse_project(&captured[0])?;
+                serde_json::to_value(json!({"tables": self.model.tables(viewer, project)?}))
+            }
             "/api/projects/{}/boards" => {
                 let project = parse_project(&captured[0])?;
                 serde_json::to_value(json!({"boards": self.model.boards(viewer, project)?}))
             }
             "/api/projects/{}/boards/{}" => {
                 let board = xops_read::BoardId::from_id(Id::parse(&captured[1])?);
-                serde_json::to_value(self.model.board(viewer, board, 200)?)
+                let query = Query::parse(&request.query);
+                let limit = query
+                    .number("limit")
+                    .unwrap_or(BOARD_PAGE)
+                    .min(BOARD_PAGE_MAX);
+                let offset = query.number("offset").unwrap_or(0);
+                serde_json::to_value(self.model.board(viewer, board, offset, limit)?)
             }
             "/api/projects/{}/tables/{}/rows/{}/history" => {
                 let project = parse_project(&captured[0])?;
@@ -384,6 +430,32 @@ fn parse_table(name: &str) -> Result<TableId> {
     }
 }
 
+/// 查询串。**只认 `key=value&key=value`**，没有数组、没有嵌套、不解析 `+`。
+///
+/// ⚠️ **它只服务于分页。** 筛选与排序是**看板定义**的一部分（`BRD-001`，经 MCP 改），
+/// 不是查询串上的参数——在这里加一个 `?filter=` 就等于开了第二条定义看板的路，
+/// 而那一条没有审计、没有权限、没有名字。
+struct Query<'a>(&'a str);
+
+impl<'a> Query<'a> {
+    const fn parse(raw: &'a str) -> Self {
+        Self(raw)
+    }
+
+    fn get(&self, key: &str) -> Option<&'a str> {
+        self.0.split('&').find_map(|pair| {
+            let (name, value) = pair.split_once('=')?;
+            (name == key).then_some(value)
+        })
+    }
+
+    /// 一个非负整数。**解析不了就当没给**，不报 400——
+    /// 一个手打错的 `?limit=abc` 该看到第一页，不该看到一屏错误。
+    fn number(&self, key: &str) -> Option<usize> {
+        self.get(key)?.parse().ok()
+    }
+}
+
 fn read_request(stream: &mut TcpStream) -> std::result::Result<Request, Response> {
     let mut reader = BufReader::new(
         stream
@@ -416,13 +488,12 @@ fn read_request(stream: &mut TcpStream) -> std::result::Result<Request, Response
         .ok_or_else(|| Response::problem(400, "读不到请求"))?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_owned();
-    let path = parts
-        .next()
-        .unwrap_or_default()
-        .split('?')
-        .next()
-        .unwrap_or("/")
-        .to_owned();
+    let target = parts.next().unwrap_or_default();
+    let (path, query) = target
+        .split_once('?')
+        .map_or((target, ""), |(path, query)| (path, query));
+    let path = if path.is_empty() { "/" } else { path }.to_owned();
+    let query = query.to_owned();
 
     let mut length = 0usize;
     let mut session = None;
@@ -458,6 +529,7 @@ fn read_request(stream: &mut TcpStream) -> std::result::Result<Request, Response
     Ok(Request {
         method,
         path,
+        query,
         session,
         headers,
         body,

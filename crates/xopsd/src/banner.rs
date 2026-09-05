@@ -70,6 +70,20 @@ pub fn render(config: &Config, assembled: &Assembled) -> String {
         }
     }
 
+    if assembled.logins == 0 {
+        // ⚠️ **第三处不能悄悄发生的降级。** 页面在、`POST /session` 在，
+        // 就是没有人登得进来——而错误上分不出"没配"与"打错了"，
+        // 那个不区分是给探测者的（`IDN-001`），不是给运维的。
+        out.push_str(
+            "\n⚠️  **没有预置任何账号**：Web 上一个人都登不进来（登录一律回「凭证不对」）。\n    \
+             设 XOPS_LOGIN=账号:口令[:显示名]，多个用逗号隔开。\n    \
+             ⚠️ 它是 IDN-002 的**部署自测**那一半：摘要没加盐、没有慢哈希——\n\x20   \
+             真正的登录路径是 OAuth，那一半还没接。\n",
+        );
+    } else {
+        out.push_str(&format!("\n  预置账号    {} 个\n", assembled.logins));
+    }
+
     out.push_str("\n⚠️  插件的出网后端没接（Denied）：声明了出网的插件也发不出去。\n");
     out
 }
@@ -121,6 +135,12 @@ mod tests {
         assert!(banner.contains("桩"), "引擎是桩这件事要说出来");
         assert!(banner.contains("裸跑"), "D58 的代价要说出来");
         assert!(banner.contains("出网后端没接"));
+        // ⚠️ **登不进来这件事也要说出来。** 页面在、路由在、就是进不去——
+        // 而错误上分不出"没配"与"打错了"，那个不区分是给探测者的。
+        assert!(
+            banner.contains("没有预置任何账号"),
+            "默认配置下没有人登得进 Web，横幅要说出来：{banner}"
+        );
         assert!(banner.contains("/mcp"));
     }
 }

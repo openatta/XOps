@@ -26,6 +26,41 @@ export type Project = {
 
 export type BoardSummary = { board: string; name: string; table: string }
 
+/**
+ * 个人看板上的一条（`NTF-001`）。
+ *
+ * ⚠️ **`text` 是指针不是内容**（`NTF-006`），由确定性代码生成、不经模型（`NTF-003`），
+ * 自由文本原样引用或截断（`NTF-004`）。**前端照原样显示，不再加工**——
+ * 摘要、改写、翻译在这里都是越界。
+ */
+export type Notice = {
+  notice: string
+  /** 五类之一（`NTF-007`）。 */
+  kind: string
+  /** **可以是 null**——`_notices` 是平台全局表（`NTF-014`）。 */
+  project: string | null
+  subject: string
+  text: string
+  created_at: number
+}
+
+export type Member = {
+  user: string
+  display_name: string
+  role: string
+  added_at: number
+}
+
+export type ColumnSummary = { column: string; kind: string; required: boolean }
+
+/** 一张表。**不含任何一行数据**——要看行就去看板那条路（`BRD-001`）。 */
+export type TableSummary = {
+  table: string
+  kind: string
+  protection: string
+  columns: ColumnSummary[]
+}
+
 export type Row = { row: string; values: Record<string, unknown> }
 
 export type BoardView = {
@@ -34,6 +69,15 @@ export type BoardView = {
   table: string
   columns: string[]
   rows: Row[]
+  offset: number
+  /**
+   * 后面还有没有。
+   *
+   * ⚠️ **没有"一共几行"，这是刻意的**：一个总数会被读成一个指标
+   * （"缺陷 42 条"），而 `BRD-002` 说平台不内建任何报表。
+   * 翻页需要的只是这一个布尔。
+   */
+  has_more: boolean
 }
 
 export type Version = {
@@ -81,10 +125,22 @@ async function getText(path: string): Promise<string> {
 export const api = {
   me: () => get<Identity>('/api/me'),
   projects: () => get<{ projects: Project[] }>('/api/projects'),
+  /**
+   * 个人看板（`NTF-001`）。
+   *
+   * ⚠️ **没有 user 参数，这是刻意的。** `NTF-010` 的硬限定靠调用方**表达不出**
+   * "看别人的"这个请求兑现——不是"表达得出但被拒绝"。别给它加参数。
+   */
+  notices: () =>
+    get<{ notices: Notice[]; limit: number; truncated: boolean }>('/api/me/notices'),
+  members: (project: string) =>
+    get<{ members: Member[] }>(`/api/projects/${project}/members`),
+  tables: (project: string) =>
+    get<{ tables: TableSummary[] }>(`/api/projects/${project}/tables`),
   boards: (project: string) =>
     get<{ boards: BoardSummary[] }>(`/api/projects/${project}/boards`),
-  board: (project: string, board: string) =>
-    get<BoardView>(`/api/projects/${project}/boards/${board}`),
+  board: (project: string, board: string, offset = 0) =>
+    get<BoardView>(`/api/projects/${project}/boards/${board}?offset=${offset}`),
   history: (project: string, table: string, row: string) =>
     get<RowHistory>(`/api/projects/${project}/tables/${table}/rows/${row}/history`),
   settlements: (project: string, table: string, instance: string) =>

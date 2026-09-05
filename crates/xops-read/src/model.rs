@@ -14,6 +14,7 @@ use serde_json::Value;
 use xops_audit::{AuditEnvelope, AuditLog};
 use xops_core::{Actor, Clock, Error, Id, Result, Role, RowId, TableName, Timestamp, WriteOp};
 use xops_identity::{Action, Directory, ProjectId, UserId};
+use xops_notice::Notices;
 use xops_store::{Store, WriteEngine, WriteRequest};
 use xops_table::{Filter, MAX_SCAN, TableId, Tables};
 
@@ -63,6 +64,14 @@ pub struct BoardView {
     /// 显示哪几列，**按看板定义的顺序**。
     pub columns: Vec<String>,
     pub rows: Vec<RowView>,
+    /// 这一页从第几行开始。
+    pub offset: usize,
+    /// 后面还有没有。
+    ///
+    /// ⚠️ **给的是"还有没有"，不是"一共几行"。** 一个总数会被读成一个指标
+    /// （"缺陷 42 条"），而 `BRD-002` 说平台不内建任何报表、`BRD-003` 的判据是
+    /// "哪天要在平台代码里写什么是缺陷密度就越界了"。**翻页需要的只是这一个布尔。**
+    pub has_more: bool,
 }
 
 /// 一行。
@@ -110,6 +119,56 @@ pub struct LongTextView {
     pub text: String,
 }
 
+/// 个人看板上的一条（`NTF-001`）。
+///
+/// ⚠️ **`text` 是指针不是内容**（`NTF-006`：不含凭据、令牌或产物原文），
+/// 由确定性代码生成、不经模型（`NTF-003`），里面的自由文本原样引用或截断（`NTF-004`）。
+/// **这三条在 RP-17 那一侧兑现，本视图不复核**——同一条规则写两遍，两遍迟早不一致。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NoticeView {
+    pub notice: String,
+    /// 五类之一（`NTF-007`）。
+    pub kind: String,
+    /// 哪个项目。**可以是 `None`**——`_notices` 是平台全局表（`NTF-014`）。
+    pub project: Option<String>,
+    pub subject: String,
+    pub text: String,
+    pub created_at: i64,
+}
+
+/// 一个项目成员。
+///
+/// 显示名在这里解出来：前端**没有第二条数据通路**去按 id 换名字，
+/// 给 id 不给名字的视图等于逼它去开一条。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MemberView {
+    pub user: String,
+    pub display_name: String,
+    pub role: String,
+    pub added_at: i64,
+}
+
+/// 一张表。**不含任何一行数据。**
+///
+/// ⚠️ 它回答的是"有哪些表"，不是"表里有什么"。要看行就去看板那条路（`BRD-001`）——
+/// 一个顺手加上"顺便回十行"的版本，就是绕过看板定义的第二条读数据通路。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TableSummary {
+    pub table: String,
+    /// `system` 还是 `user`。
+    pub kind: String,
+    pub protection: String,
+    pub columns: Vec<ColumnSummary>,
+}
+
+/// 一列：名字与它是什么类型。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ColumnSummary {
+    pub column: String,
+    pub kind: String,
+    pub required: bool,
+}
+
 /// 读模型。
 pub struct ReadModel {
     engine: Arc<WriteEngine>,
@@ -117,6 +176,9 @@ pub struct ReadModel {
     audit: Arc<AuditLog>,
     directory: Arc<Directory>,
     tables: Arc<Tables>,
+    /// 个人看板读它（`NTF-001`）。**这条依赖是 L3 → L1，不成环**——
+    /// `xops-notice` 不认识本 crate。
+    notices: Arc<Notices>,
     clock: Arc<dyn Clock>,
 }
 
@@ -134,6 +196,7 @@ impl ReadModel {
         audit: Arc<AuditLog>,
         directory: Arc<Directory>,
         tables: Arc<Tables>,
+        notices: Arc<Notices>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -142,6 +205,7 @@ impl ReadModel {
             audit,
             directory,
             tables,
+            notices,
             clock,
         }
     }
@@ -178,6 +242,99 @@ impl ReadModel {
                 archived: project.is_archived(),
                 display_name: project.display_name,
                 role: role.as_str().to_owned(),
+            })
+            .collect())
+    }
+
+    /// 我的未读（个人看板，`NTF-001`）。跨项目一起排（`NTF-014`）。
+    ///
+    /// ⚠️ **签名里没有"看谁的"这个参数**，与 `Notices::unread` 同一条口径：
+    /// `NTF-010` 的硬限定靠**调用方表达不出那个请求**兑现，不靠一次检查。
+    ///
+    /// 只回未读。**已读的从这一页消失，就是「标记已读」的意思**——
+    /// 个人看板是一份待办，不是一条收件箱时间线。
+    ///
+    /// 回话里带 `truncated`：⚠️ **静默截断在这里的表现是"怎么没收到通知"**，
+    /// 而那是查起来最慢的一种。所以多取一条来判断，判断完就丢掉。
+    ///
+    /// # Errors
+    /// 底层不可用。
+    pub fn my_notices(&self, viewer: UserId, limit: usize) -> Result<(Vec<NoticeView>, bool)> {
+        let mut rows = self.notices.unread(viewer, limit.saturating_add(1))?;
+        let truncated = rows.len() > limit;
+        rows.truncate(limit);
+        Ok((
+            rows.into_iter()
+                .map(|notice| NoticeView {
+                    notice: notice.id.to_string(),
+                    kind: notice.kind.as_str().to_owned(),
+                    project: notice.project.map(|project| project.to_string()),
+                    subject: notice.subject,
+                    text: notice.text,
+                    created_at: notice.created_at.as_millis(),
+                })
+                .collect(),
+            truncated,
+        ))
+    }
+
+    /// 项目成员与各自的角色（`PRJ-007`）。
+    ///
+    /// # Errors
+    /// 非成员看到的与项目不存在一致（`PRJ-008`）——授权在 `Directory::members` 里。
+    pub fn members(&self, viewer: UserId, project: ProjectId) -> Result<Vec<MemberView>> {
+        self.directory
+            .members(viewer, project)?
+            .into_iter()
+            .map(|member| {
+                // 显示名解不出来时**不编一个**：一个被删掉的用户显示成他的 id，
+                // 比显示成"未知"更有用——id 还查得下去。
+                let display_name = self
+                    .directory
+                    .user(member.user)?
+                    .map_or_else(|| member.user.to_string(), |user| user.display_name);
+                Ok(MemberView {
+                    user: member.user.to_string(),
+                    display_name,
+                    role: member.role.as_str().to_owned(),
+                    added_at: member.added_at.as_millis(),
+                })
+            })
+            .collect()
+    }
+
+    /// 这个项目有哪些表。软删掉的不在里面（`TBL-026`）。
+    ///
+    /// ⚠️ **一行数据都不回。** 要看行就去看板那条路（`BRD-001`）——
+    /// 一个顺手"再回十行"的版本，就是绕过看板定义的第二条读数据通路。
+    ///
+    /// # Errors
+    /// 非成员看到的与项目不存在一致——授权在 `Tables::list` 里。
+    pub fn tables(&self, viewer: UserId, project: ProjectId) -> Result<Vec<TableSummary>> {
+        Ok(self
+            .tables
+            .list(viewer, project)?
+            .into_iter()
+            .map(|schema| TableSummary {
+                table: schema.name.as_str().to_owned(),
+                kind: if schema.name.is_system() {
+                    "system".to_owned()
+                } else {
+                    "user".to_owned()
+                },
+                protection: match schema.protection {
+                    xops_table::Protection::Protected => "protected".to_owned(),
+                    xops_table::Protection::Normal => "normal".to_owned(),
+                },
+                columns: schema
+                    .columns
+                    .into_iter()
+                    .map(|column| ColumnSummary {
+                        column: column.name,
+                        kind: column.ty.describe(),
+                        required: column.required,
+                    })
+                    .collect(),
             })
             .collect())
     }
@@ -241,7 +398,13 @@ impl ReadModel {
     ///
     /// # Errors
     /// 非成员 / 看板不存在 —— 同一个错。
-    pub fn board(&self, viewer: UserId, board: BoardId, limit: usize) -> Result<BoardView> {
+    pub fn board(
+        &self,
+        viewer: UserId,
+        board: BoardId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<BoardView> {
         let definition = self
             .all_boards()?
             .into_iter()
@@ -271,7 +434,10 @@ impl ReadModel {
                 }
             });
         }
-        rows.truncate(limit);
+        // 分页：**先排完序再切**。⚠️ 顺序不能反——排序要拿到全部命中才答得出来，
+        // 先切再排就是"稳定地显示最老的那一批"，而它不报错。
+        let has_more = rows.len() > offset.saturating_add(limit);
+        let rows: Vec<(RowId, Value)> = rows.into_iter().skip(offset).take(limit).collect();
 
         let columns = if definition.columns.is_empty() {
             let schema = self
@@ -297,6 +463,8 @@ impl ReadModel {
                 })
                 .collect(),
             columns,
+            offset,
+            has_more,
         })
     }
 

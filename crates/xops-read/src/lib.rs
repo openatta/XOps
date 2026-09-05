@@ -11,6 +11,7 @@ pub mod tools;
 
 pub use board::{Board, BoardId, BoardSpec, Direction, Filter};
 pub use model::{
-    BOARDS_TABLE, BoardSummary, BoardView, IdentityView, LongTextView, ProjectView, ReadModel,
-    RowHistoryView, RowView, SettlementView, VersionView,
+    BOARDS_TABLE, BoardSummary, BoardView, ColumnSummary, IdentityView, LongTextView, MemberView,
+    NoticeView, ProjectView, ReadModel, RowHistoryView, RowView, SettlementView, TableSummary,
+    VersionView,
 };

@@ -214,7 +214,12 @@ impl ShowBoard {
                     Schema::new()
                         .field(project_field())
                         .field(Field::required("board", FieldType::Id, "看板标识"))
-                        .field(Field::optional("limit", FieldType::Integer, "最多几行")),
+                        .field(Field::optional("limit", FieldType::Integer, "最多几行"))
+                        .field(Field::optional(
+                            "offset",
+                            FieldType::Integer,
+                            "从第几行开始。回话里的 hasMore 说后面还有没有",
+                        )),
                 )
                 .requires(Requirement::InProject(Action::ReadProject))
                 .idempotency(Idempotency::ReadOnly)
@@ -239,7 +244,16 @@ impl Tool for ShowBoard {
             .and_then(|limit| usize::try_from(limit).ok())
             .unwrap_or(100)
             .min(1_000);
-        let view = self.model.board(context.identity.user.id, board, limit)?;
+        // ⚠️ **agent 也会撞上同一堵墙。** 没有 offset 的话，一张超过 limit 行的表
+        // 在 tool 这一侧就是"后面那些不存在"——**而它不报错**。
+        let offset = context
+            .arg("offset")
+            .and_then(Value::as_i64)
+            .and_then(|offset| usize::try_from(offset).ok())
+            .unwrap_or(0);
+        let view = self
+            .model
+            .board(context.identity.user.id, board, offset, limit)?;
         serde_json::to_value(view)
             .map_err(|error| Error::internal(format!("看板视图装不下：{error}")))
     }

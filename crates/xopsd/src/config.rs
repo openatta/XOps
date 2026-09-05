@@ -23,6 +23,18 @@ pub const MODEL_KEY: &str = "XOPS_MODEL_KEY";
 pub const MODEL: &str = "XOPS_MODEL";
 /// 模型服务地址（兼容 Anthropic Messages 的任何一个）。
 pub const MODEL_BASE_URL: &str = "XOPS_MODEL_BASE_URL";
+/// 预置账号（`IDN-002` 的前一半，**部署自测用**）。
+///
+/// 形如 `账号:口令[:显示名]`，多个用逗号隔开。
+///
+/// ⚠️ **不给它，Web 上一个人都登不进来。** `Directory` 默认一个身份提供方都没有，
+/// 于是 `POST /session` 一律回"凭证不对"——**页面在，路由在，就是进不去**，
+/// 而且从错误上看不出是"没配"还是"打错了"（那个不区分是给探测者的，`IDN-001`）。
+/// 这件事会在启动横幅上说出来。
+///
+/// ⚠️ **这不是给终端用户用的口令体系**：摘要没加盐、没有慢哈希，也不打算有
+/// （见 `BuiltinProvider` 的注释）。**真正的登录路径是 OAuth。**
+pub const LOGIN: &str = "XOPS_LOGIN";
 
 /// 一份启动配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +53,8 @@ pub struct Config {
     pub model_key: Option<String>,
     pub model: String,
     pub model_base_url: Option<String>,
+    /// 预置账号：`(账号, 口令, 显示名)`。**空的时候没有人登得进 Web。**
+    pub logins: Vec<(String, String, String)>,
 }
 
 impl Default for Config {
@@ -55,6 +69,8 @@ impl Default for Config {
             model_key: None,
             model: "claude-sonnet-4-6".to_owned(),
             model_base_url: None,
+            // ⚠️ **没有默认账号。** 一个写死的默认口令与一个写死的默认密钥是同一种东西。
+            logins: Vec::new(),
         }
     }
 }
@@ -86,6 +102,7 @@ impl Config {
             model_key: var(MODEL_KEY),
             model: var(MODEL).unwrap_or(default.model),
             model_base_url: var(MODEL_BASE_URL),
+            logins: var(LOGIN).map(|raw| parse_logins(&raw)).unwrap_or_default(),
         })
     }
 
@@ -94,6 +111,29 @@ impl Config {
     pub fn in_memory(&self) -> bool {
         self.db == ":memory:"
     }
+}
+
+/// `账号:口令[:显示名]`，逗号分隔。
+///
+/// ⚠️ **缺了口令的那一条直接丢掉，不当成"口令是空串"。** 空口令能登进去，
+/// 而写的人以为自己配的是"没配"。
+fn parse_logins(raw: &str) -> Vec<(String, String, String)> {
+    raw.split(',')
+        .filter_map(|entry| {
+            let mut parts = entry.trim().splitn(3, ':');
+            let account = parts.next()?.trim();
+            let secret = parts.next()?.trim();
+            if account.is_empty() || secret.is_empty() {
+                return None;
+            }
+            let display = parts.next().map(str::trim).filter(|name| !name.is_empty());
+            Some((
+                account.to_owned(),
+                secret.to_owned(),
+                display.unwrap_or(account).to_owned(),
+            ))
+        })
+        .collect()
 }
 
 fn var(name: &str) -> Option<String> {
@@ -120,5 +160,22 @@ mod tests {
         assert_ne!(config.mcp_addr, config.web_addr, "两个服务面分开");
         assert!(config.in_memory());
         assert!(config.model_key.is_none(), "不给模型凭据就是桩引擎");
+        assert!(config.logins.is_empty(), "没有默认账号");
+    }
+
+    #[test]
+    fn 预置账号解析得出来而且缺口令的那条被丢掉() {
+        assert_eq!(
+            parse_logins("alice:pw1:Alice,bob:pw2"),
+            vec![
+                ("alice".to_owned(), "pw1".to_owned(), "Alice".to_owned()),
+                ("bob".to_owned(), "pw2".to_owned(), "bob".to_owned()),
+            ],
+            "不给显示名就用账号"
+        );
+        // ⚠️ **空口令登得进去，而写的人以为自己配的是「没配」。**
+        assert!(parse_logins("alice").is_empty(), "没有口令");
+        assert!(parse_logins("alice:").is_empty(), "口令是空的");
+        assert!(parse_logins(":pw").is_empty(), "账号是空的");
     }
 }

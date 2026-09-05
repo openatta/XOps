@@ -3706,6 +3706,7 @@ dependencies = [
  "xops-core",
  "xops-identity",
  "xops-mcp",
+ "xops-notice",
  "xops-store",
  "xops-table",
 ]
@@ -3838,6 +3839,7 @@ dependencies = [
  "xops-core",
  "xops-identity",
  "xops-mcp",
+ "xops-notice",
  "xops-read",
  "xops-store",
  "xops-table",

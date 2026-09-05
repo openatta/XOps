@@ -13,6 +13,9 @@ xops-audit.workspace = true
 xops-identity.workspace = true
 xops-mcp.workspace = true
 xops-table.workspace = true
+# 个人看板要读 `_notices` 已经写下的行（NTF-001）。
+# ⚠️ L3 → L1，**不成环**：xops-notice 不认识 xops-read。归属见 requirements/README §4。
+xops-notice.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

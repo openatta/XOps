@@ -22,3 +22,5 @@ workspace = true
 [dev-dependencies]
 xops-audit.workspace = true
 xops-mcp.workspace = true
+# 读模型要一个 `Notices`（个人看板，NTF-001）。测试装配里也得给它一个真的。
+xops-notice.workspace = true

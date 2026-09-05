@@ -517,12 +517,20 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 这份接口的**完备性**是 RP-06 能并行开工的全部前提：它需要的每一样数据都要在这里，
   不能让它去开第二条数据通路。
 - 视图：`IdentityView` · `ProjectView` · `BoardSummary` · `BoardView` · `RowHistoryView` ·
-  `SettlementView` · `LongTextView`。
+  `SettlementView` · `LongTextView` · `NoticeView` · `MemberView` · `TableSummary`。
+- ⚠️ **多了一条依赖边：`xops-read` → `xops-notice`（L3 → L1）。** 个人看板要读
+  `_notices` 已经写下的行。**不成环**——`xops-notice` 不认识 `xops-read`，
+  RP-17 依赖的是读模型的**形状**，本 crate 依赖的是它写下的**行**。
 
 ### Element: rust:xops-read#BoardView
 - module: xops-read
 - consumers: [xops-web]
 - **`writtenBy` 总是留着**：看板上的来源标识读的就是它（`TBL-016`）。
+- **多两个分页字段**：`offset` 与 `has_more`。
+  ⚠️ **是"还有没有"，不是"一共几行"**——一个总数会被读成一个指标，而 `BRD-002`
+  说平台不内建任何报表。翻页需要的只是这一个布尔。
+- `ReadModel::board` 因此多一个 `offset` 参数。⚠️ **切片在排序之后**：
+  排序要拿到全部命中才答得出来，先切再排就是"稳定地显示最老的那一批"，**而它不报错**。
 
 ### Element: rust:xops-read#RowHistoryView
 - module: xops-read
@@ -540,6 +548,8 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - **新增 `GET /healthz`**:存活探针。**不认证、不查库、回话里没有任何信息**——
   版本、项目数、库路径一律不给。⚠️ 它**不是 `MCP-013` 的第五个例外**:
   例外说的是"能写点什么的非 MCP 入口",而它连读都不读。
+- **再新增三条只读路由**：`/api/me/notices` · `/api/projects/{}/members` ·
+  `/api/projects/{}/tables`。三条都是 GET，那条"一条写路由都没有"的枚举测试不放宽。
 
 ### Element: rust:xops-web#Sessions
 - module: xops-web
@@ -554,6 +564,13 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 只读 HTTP。`handle(&Request) -> Response` **没有传输，因而整段可以直接测**。
 - ⚠️ 它与 MCP 的服务面**不共用路由层**。两边各有一小段 HTTP 解析，**这份重复是故意留的**：
   合起来就等于让两个服务面共用一个路由层，而那正是这条分工要避免的事。
+- `Request` **多一个 `query` 字段**（`?` 后面那一段，原样）。
+  ⚠️ **它以前被直接丢掉**，于是任何"翻页"都无处可放。
+  **路由匹配用的仍然只有 `path`**——查询串不参与匹配，有测试盯着：
+  一条不存在的路由不会因为带了查询串就命中别的路由。
+- ⚠️ **查询串只服务于分页。** 筛选与排序是**看板定义**的一部分（`BRD-001`，经 MCP 改）。
+  在这里加一个 `?filter=` 就等于开了第二条定义看板的路，
+  **而那一条没有审计、没有权限、也没有名字。**
 
 ### Element: rust:xops-web#Assets
 - module: xops-web
@@ -1397,6 +1414,12 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
   **一个写死的默认密钥看起来是加密的，实际不是**——那比没有密钥更糟。
 - **移除** `webhook_secret` / `XOPS_WEBHOOK_SECRET`：验签密钥改为按项目存在仓绑定上。
   见 `DECISIONS.yaml#cbc-platform-webhook-secret`。
+- **新增** `XOPS_LOGIN`：预置账号，`账号:口令[:显示名]`，逗号分隔（`IDN-002` 的前一半，
+  **部署自测用**）。⚠️ **同样没有默认值**——一个写死的默认口令与一个写死的默认密钥
+  是同一种东西。缺口令的那一条**直接丢掉**，不当成"口令是空串"：
+  空口令登得进去，而写的人以为自己配的是"没配"。
+- ⚠️ **它不是终端用户的口令体系**：摘要没加盐、没有慢哈希，也不打算有。
+  **真正的登录路径是 OAuth（`IDN-002` 的后一半），那一半还没接。**
 
 ### Element: rust:xopsd#assemble
 - module: xopsd
@@ -1407,16 +1430,28 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - 两个服务面**各监听各的端口、共用同一份状态**（`I-L`、`G2`）。分开不是为了好看：
   `xops-web` 里结构性地不存在写业务对象的路由，**而那件事只有在两个面分开时才成立**。
 - 装配层挂的 `ProjectHook` 负责在建项目之后把那四张系统表建起来（`TBL-005`）。
+- **接上身份提供方**（`IDN-001`）。⚠️ **这条线以前是断的**：`Directory::new` 一个
+  提供方都没有，而装配层从来没接过一个——于是 `POST /session` 一律回"凭证不对"，
+  **页面在、路由在、就是进不去，日志里一个字都没有**。
+  单元全绿、装配也过，而那条链在运行时是断的。**起一个 daemon 才撞得出来。**
+- ⚠️ **「预置」是两件事**：提供方认得这份凭证，**和**用户记录已经在。
+  `IDN-003` 关着自注册，所以只接提供方、不建用户记录的话，`login` 会走到
+  "没被预置或邀请"那一支——回的还是"凭证不对"，**与口令打错一模一样**
+  （那个不区分是给探测者的，不是给运维的）。装配层因此两件都做，
+  且**重启一次不该失败**（已经有了就跳过）。
+- ⚠️ **通知先于读模型建**：个人看板要读它（`NTF-001`）。
+  **装配顺序就是依赖顺序**，不是因为哪里报了错。
 
 ### Element: rust:xopsd#Assembled
 - module: xopsd
 - consumers: [部署]
-- 交出去的两个服务面，外加**两处不能悄悄发生的降级**：
-  `engine_kind`（引擎是真的还是桩）与 `unsatisfied`（裸跑没兑现的八条，`D58`、`EXE-029`）。
+- 交出去的两个服务面，外加**三处不能悄悄发生的降级**：
+  `engine_kind`（引擎是真的还是桩）· `unsatisfied`（裸跑没兑现的那些，`D58`、`EXE-029`）·
+  **`logins`（预置了几个能登进 Web 的账号，0 就是没有人进得去）**。
 - ⚠️ 它们不是给日志看的，是**启动横幅必须说出来**的东西：
-  "以为接了真引擎、其实跑的是桩"是一种查起来很慢的错。
-- **新增** `engine_gaps`：引擎那一侧的已知缺口，与 `unsatisfied` 并列上横幅。
-  同一条道理——**降级要看得见**，而"看着像真数、实际不是"是最难查的那一种。
+  "以为接了真引擎、其实跑的是桩"是一种查起来很慢的错，
+  **"页面在、路由在、就是登不进去"是另一种**——后者更难查，因为它连一条日志都没有。
+- `engine_gaps`：引擎那一侧的已知缺口，与 `unsatisfied` 并列上横幅。**现在是空表**。
 
 ### Element: rust:xops-repo#Sealer::from_hex
 - module: xops-repo
@@ -1848,3 +1883,45 @@ rust:<crate>#<路径>        例：rust:xops-store#Store::put
 - consumers: [RP-11]
 - 一句话说清这一列要什么，给模型看。枚举要把取值列出来——
   模型猜不出来，而猜错一格 `EXE-024` 是**整批不入表**。
+
+### Element: rust:xops-read#NoticeView
+- module: xops-read
+- consumers: [xops-web]
+- 个人看板上的一条（`NTF-001`）。字段是 `_notices` 那张表的列的子集：
+  `notice` · `kind` · `project` · `subject` · `text` · `created_at`。
+- ⚠️ **`text` 是指针不是内容**（`NTF-006`：不含凭据、令牌或产物原文），
+  而且它由确定性代码生成、不经模型（`NTF-003`），自由文本原样引用或截断（`NTF-004`）。
+  **这三条都在 RP-17 那一侧兑现，本视图不复核**——复核等于把同一条规则写两遍，
+  而两遍迟早会不一致。
+
+### Element: rust:xops-read#ReadModel::my_notices
+- module: xops-read
+- consumers: [xops-web]
+- 我的未读，跨项目一起排（`NTF-014`）。
+- ⚠️ **签名里没有"看谁的"这个参数。** 与 `xops-notice` 的 `Notices::unread` 同一条口径：
+  `NTF-010` 的硬限定靠**调用方表达不出那个请求**兑现，不靠一次检查。
+- 归属：条目在 RP-17，读模型这一侧在 RP-05。**这两句以前互相指对方，谁都没做**——
+  见 `docs/requirements/README.md` §4 那条注。
+
+### Element: rust:xops-read#MemberView
+- module: xops-read
+- consumers: [xops-web]
+- 一个项目成员：`user` · `display_name` · `role` · `added_at`。
+- 显示名在这里解出来。前端**没有第二条数据通路**去按 id 换名字，
+  所以"给了 id 不给名字"的视图等于逼它去开一条。
+
+### Element: rust:xops-read#ReadModel::members
+- module: xops-read
+- consumers: [xops-web]
+- 项目成员。授权走 `Directory::members`，非成员看到的与项目不存在一致（`PRJ-008`）。
+
+### Element: rust:xops-read#TableSummary
+- module: xops-read
+- consumers: [xops-web]
+- 一张表：`table` · `kind`（system / user）· `protection` · `columns`（列名与类型描述）。
+- **不含任何一行数据。** 界线见 `api:http.paths./api/projects/{project}/tables.get`。
+
+### Element: rust:xops-read#ReadModel::tables
+- module: xops-read
+- consumers: [xops-web]
+- 这个项目有哪些表。软删掉的不在里面（`TBL-026`）。

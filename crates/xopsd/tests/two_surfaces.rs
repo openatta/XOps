@@ -738,3 +738,77 @@ fn 没有项目设过密钥时webhook端点不是探测器() {
         "回的是「不存在」"
     );
 }
+
+#[test]
+fn 配了预置账号就真的登得进来() {
+    // ⚠️ 这条盯的是一处**装配层的断链**：`Directory::new` 一个身份提供方都没有，
+    // 而装配层从来没接过一个 —— 于是 `POST /session` 一律回"凭证不对"，
+    // **页面在、路由在、就是进不去**，日志里一个字都没有。
+    // 单元测试全绿、装配也过，而那条链在运行时是断的。
+    let config = Config {
+        secret_key: "0a".repeat(32),
+        logins: vec![("alice".to_owned(), "口令".to_owned(), "Alice".to_owned())],
+        ..Config::default()
+    };
+    let assembled = xopsd::assemble(&config).unwrap();
+    assert_eq!(assembled.logins, 1);
+
+    let login = |account: &str, secret: &str| {
+        assembled.web.handle(&xops_web::Request {
+            method: "POST".into(),
+            path: "/session".into(),
+            query: String::new(),
+            session: None,
+            headers: std::collections::BTreeMap::new(),
+            body: format!(r#"{{"provider":"builtin","account":"{account}","secret":"{secret}"}}"#)
+                .into_bytes(),
+        })
+    };
+
+    let ok = login("alice", "口令");
+    assert_eq!(ok.status, 200, "配了就该登得进来");
+    let session = ok.set_session.clone().expect("要下发会话");
+
+    // ⚠️ **两种失败必须是同一个错**（`IDN-001`）：区分"账号不存在"与"口令不对"
+    // 是给探测者的。
+    assert_eq!(
+        login("alice", "错的").status,
+        login("mallory", "随便").status
+    );
+
+    // 登进来之后个人看板读得到 —— 这一条把「登录 → 个人看板」整条链走通。
+    let me = assembled.web.handle(&xops_web::Request {
+        method: "GET".into(),
+        path: "/api/me/notices".into(),
+        query: String::new(),
+        session: Some(session),
+        headers: std::collections::BTreeMap::new(),
+        body: Vec::new(),
+    });
+    assert_eq!(me.status, 200, "登进来之后个人看板该读得到");
+}
+
+#[test]
+fn 不配预置账号就一个人都登不进来而且横幅说出来() {
+    let config = Config {
+        secret_key: "0a".repeat(32),
+        ..Config::default()
+    };
+    let assembled = xopsd::assemble(&config).unwrap();
+    assert_eq!(assembled.logins, 0);
+    let response = assembled.web.handle(&xops_web::Request {
+        method: "POST".into(),
+        path: "/session".into(),
+        query: String::new(),
+        session: None,
+        headers: std::collections::BTreeMap::new(),
+        body: r#"{"provider":"builtin","account":"alice","secret":"whatever"}"#
+            .as_bytes()
+            .to_vec(),
+    });
+    assert_ne!(response.status, 200, "没配就该进不来");
+    assert!(
+        xopsd::banner::render(&config, &assembled).contains("没有预置任何账号"),
+        "**这一条不能悄悄发生**：页面在、路由在、就是登不进去"
+    );
+}

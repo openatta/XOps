@@ -82,6 +82,12 @@ TOKEN=$(./target/release/xopsd --issue-token alice)   # **第一把令牌只能�
 **引擎是嵌进来的**(`D61`):AttaCore 以 git 子模块钉在 `50e153e`（`D65`：上游还没打这一版的 tag）,**一个进程**,
 没有 `attacored`。克隆之后要 `git submodule update --init`。
 
+## 部署
+
+看 [部署指南](docs/deployment.md)。⚠️ **它的第 2 节是重点**——
+XOps 明写了一批"我们不做"的决定（容器隔离 `D62`、资源硬上限 `D64`、限流 `D48`），
+**那些不是待办，是转交**：一个把指南只读到第一节的部署，跑得起来，也真的没有那道墙。
+
 ## 设计文档
 
 三层各管一件事,**接口以 `docs/contracts/` 为准**:

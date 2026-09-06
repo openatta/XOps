@@ -136,17 +136,12 @@ impl EmbeddedEngine {
     /// 是**事后归类**——它决定这次执行算不算数，但那时钱已经花了。
     /// 两处都要有：引擎这一侧管住烧，`Runtime` 那一侧管住算。
     ///
-    /// ⚠️ **两个数的口径不一样，而且是故意的**：
-    ///
-    /// ```text
-    /// 引擎比的      input + output（它自己的 Spend 就是这么累的）
-    /// 我们比的      input + output + 写缓存 + 读缓存（见 `tokens`）
-    /// ```
-    ///
-    /// 我们的数**不小于**引擎的数，所以 `Runtime` 那一道**不会比引擎晚**——
-    /// 引擎停下来的每一次，事后归类照样判得出来。反过来不成立：
-    /// 缓存占比大的时候，引擎可能一次都没喊停而我们已经判超了。
-    /// **那个方向是安全的**，它只意味着"钱花了但不算数"，不意味着漏判。
+    /// ⚠️ **`max_budget_tokens` 只是兜底，真正判的是 [`RunBudget`]。**
+    /// 引擎默认的 `EngineBudget` 读 `Spend::total_tokens()`（把缓存放在外面），
+    /// 与我们这一侧的算法分叉；所以这里同时接一个自己的策略，
+    /// 让**两边读同一个数**。设 `max_budget_tokens` 是为了那条路万一没接上时
+    /// 仍然有一个上限，**而不是让两个上限并存**——两个数不同的话，
+    /// "引擎在哪一刻收手"与"这次算不算数"就是两把尺子。
     fn settings_for(&self, worksheet: &Worksheet) -> Arc<Settings> {
         let mut settings = (*self.settings).clone();
         settings.execution.max_budget_tokens = Some(worksheet.limits.token_budget);
@@ -250,6 +245,11 @@ impl EmbeddedEngine {
             .permission(Arc::new(crate::confine::Confine::new(
                 worksheet.capabilities.workspace.clone(),
             )))
+            // 花销上限（`TSK-005`）。**接自己的那一个，不是引擎默认的**——
+            // 理由见 `RunBudget`：默认那个把缓存放在外面，与我们这一侧的算法分叉。
+            .budget_policy(Arc::new(RunBudget {
+                limit: worksheet.limits.token_budget,
+            }))
             .session_id(run.clone())
             .build()
             .map_err(|error| (FailureKind::Engine, format!("会话建不起来：{error}")))?;
@@ -301,6 +301,60 @@ impl EmbeddedEngine {
                 Err((kind, format!("{error}\n{}", collected.trace)))
             }
         }
+    }
+}
+
+/// 这次执行的花销上限（`TSK-005`）。
+///
+/// # 为什么不用引擎自带的那个
+///
+/// 引擎默认的 `EngineBudget` 读的是 `Spend::total_tokens()`——**input + output，
+/// 把缓存放在外面**。而我们这一侧算的是四项全加（见 [`tokens`]）。
+/// 两个数不一样，就意味着**引擎在哪一刻收手，和这次执行算不算数，
+/// 是按两把不同的尺子判的**。
+///
+/// ⚠️ **上游把这件事挑明了，还给了钩子。** `Spend` 现在把四个数分开带，
+/// 并命名了两种读法——上游的原话：
+///
+/// > 一次缓存读按普通输入的几分之一计费，整个算进去高估了账单，
+/// > 丢掉它又会把一个缓存命中率高的回合少算掉它读进去的大部分。
+/// > **两种读法都站得住。引擎以前是在一次加法里替所有人悄悄选了一种。**
+///
+/// 所以选择被搬到了策略这一层。`EngineBudget` 继续读 `total_tokens()`，
+/// **`max_budget_tokens` 的含义一个字没变**；想把缓存算进去的部署自己实现一个。
+/// 这就是我们要的那个：**两边读同一个数，口径合一。**
+///
+/// # 我们为什么选四项全加
+///
+/// `input_tokens` **不含命中缓存的部分**，而 `SkillScene` 的系统提示是
+/// `PromptBlock::system_cached` 发出去的——只加 input + output，
+/// 少算会从缓存那道门原样回来。`TSK-005` 比的是 **token 上限不是账单**，
+/// 两者之间宁可高估：**一个看着像真数、实际少算的预算，比没有预算更糟。**
+#[derive(Debug, Clone, Copy)]
+struct RunBudget {
+    limit: u64,
+}
+
+impl attacore_core::interface::budget_policy::BudgetPolicy for RunBudget {
+    fn on_usage(
+        &self,
+        spend: &attacore_core::interface::budget_policy::Spend,
+    ) -> attacore_core::interface::budget_policy::Spending {
+        use attacore_core::interface::budget_policy::Spending;
+        // ⚠️ **`all_tokens()`，不是 `total_tokens()`** —— 与 `tokens()` 读同一个数。
+        // 两边读法一旦分叉，"引擎在哪一刻收手"与"这次算不算数"就是两把尺子。
+        if spend.all_tokens() >= self.limit {
+            return Spending::Exhausted { limit: self.limit };
+        }
+        if spend.all_tokens() >= self.limit * 9 / 10 {
+            return Spending::Warn {
+                reminder: "<system-reminder>\nToken budget nearly exhausted. \
+                           Wrap up and give your final answer now.\n</system-reminder>"
+                    .into(),
+                limit: self.limit,
+            };
+        }
+        Spending::WithinBudget
     }
 }
 

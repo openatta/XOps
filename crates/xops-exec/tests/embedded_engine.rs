@@ -400,3 +400,50 @@ fn 预算够的时候引擎不插手() {
     );
     assert_eq!(done.output, "第二趟");
 }
+
+#[test]
+fn 缓存读也算进花销所以引擎和我们读同一个数() {
+    // ⚠️ **这一条盯的是两把尺子合成一把。**
+    //
+    // 引擎默认的 `EngineBudget` 读 `Spend::total_tokens()`——input + output，
+    // **把缓存放在外面**；而 `tokens()` 四项全加。两个数不同的话，
+    // "引擎在哪一刻收手"与"这次执行算不算数"就是按两把尺子判的。
+    //
+    // 上游把选择搬到了策略层（`Spend` 分开带四个数，命名了两种读法），
+    // 我们因此接自己的 `RunBudget` 读 `all_tokens()`。
+    //
+    // 下面这一趟：input + output 只有 200，**但缓存写了 900**。
+    // 预算 1000：按 `total_tokens()` 远没到，按 `all_tokens()` 已经撞上。
+    let mut leg = tool_call_leg(100, 100);
+    for event in &mut leg {
+        if let StreamEvent::MessageDelta {
+            usage: Some(usage), ..
+        } = event
+        {
+            usage.cache_creation_input_tokens = Some(900);
+        }
+        if let StreamEvent::MessageStart { message } = event {
+            message.usage.cache_creation_input_tokens = Some(900);
+        }
+    }
+    let (engine, mock) = engine(vec![leg, one_line_turn("第二趟")]);
+    let mut sheet = worksheet("缓存很重");
+    sheet.limits.token_budget = 1_000;
+    let done = engine.run(&sheet, &Cancel::new()).expect("回合收得住");
+
+    assert_eq!(
+        mock.calls(),
+        1,
+        "第二趟不该被发出去 —— 按 total_tokens() 只有 200，那样它会跑第二趟"
+    );
+    assert!(
+        done.trace.contains("stop=budget_exceeded"),
+        "过程记录里要说得出它是被预算掐掉的：{}",
+        done.trace
+    );
+    assert!(
+        done.tokens_used >= 1_000,
+        "用量四项全加，撞上的就是这个数：{}",
+        done.tokens_used
+    );
+}

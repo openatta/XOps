@@ -13,6 +13,7 @@ import { api } from './api'
 import type { BoardSummary, Identity, Project } from './api'
 import { logout } from './session'
 import { HOME, href, navigate, useRoute } from './router'
+import type { Route } from './router'
 import { useAsync } from './useAsync'
 import { Link, Loading, Problem } from './shared'
 import { LoginPage } from './pages/Login'
@@ -20,9 +21,22 @@ import { BoardPage } from './pages/Board'
 import { ProjectPage } from './pages/Project'
 import { PersonalPage } from './pages/Personal'
 
+/**
+ * 路由分发。**只做这一件事。**
+ *
+ * ⚠️ **登录页必须在外壳之外**，不能只是外壳里的一个早返回：
+ * React 的 hook 是无条件跑的，所以"先 `useAsync(api.me)` 再判断是不是登录页"
+ * 会让**每一次打开登录页都白发一次注定 401 的请求**。
+ * 拆成两个组件之后，`/login` 上外壳根本没有被挂载。
+ */
 export function App() {
   const route = useRoute()
-  const me = useAsync<Identity>(() => api.me(), [route.page === 'login'])
+  if (route.page === 'login') return <LoginPage />
+  return <Shell route={route} />
+}
+
+function Shell({ route }: { route: Exclude<Route, { page: 'login' }> }) {
+  const me = useAsync<Identity>(() => api.me(), [])
   const projects = useAsync<{ projects: Project[] }>(() => api.projects(), [me.value?.user])
 
   // 当前项目：项目页与看板页都有它。
@@ -36,8 +50,6 @@ export function App() {
   const signOut = useCallback(() => {
     logout().then(() => navigate(href.login(), true))
   }, [])
-
-  if (route.page === 'login') return <LoginPage />
 
   // ⚠️ **只有 401 才送去登录页。** 别的错原样显示——
   // 早先这里是"`me()` 读不到就渲染登录表单"，于是一次 500 会告诉一个
